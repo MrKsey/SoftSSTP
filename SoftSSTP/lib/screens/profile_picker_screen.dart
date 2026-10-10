@@ -50,6 +50,7 @@ class ProfilePickerScreen extends StatelessWidget {
             onReorderItem: (oldIndex, newIndex) =>
                 provider.reorderProfiles(oldIndex, newIndex),
             footer: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
