@@ -375,6 +375,29 @@ class SstpFlutter {
     }
   }
 
+  /// True when the system has exempted the app from battery optimization.
+  ///
+  /// WARNING : it's available only on Android
+  Future<bool> isIgnoringBatteryOptimizations() async {
+    try {
+      return await channelHandler.isIgnoringBatteryOptimizations();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Asks the system to exempt the app from battery optimization, so Android
+  /// does not stop the tunnel while the app is in the background.
+  ///
+  /// WARNING : it's available only on Android
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    try {
+      return await channelHandler.requestIgnoreBatteryOptimizations();
+    } catch (_) {
+      return false;
+    }
+  }
+
   static final SstpFlutter _instance = SstpFlutter.internal();
   factory SstpFlutter() => _instance;
   SstpFlutter.internal();

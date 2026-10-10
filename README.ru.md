@@ -149,24 +149,24 @@ GitHub Release. Версия берётся из отправленного те
 <table>
   <tr>
     <td align="center">
-      <img src="donate/bitcoin.jpg" width="220" alt="QR-код Bitcoin"><br>
+      <img src="docs/screenshots/donate/bitcoin.jpg" width="220" alt="QR-код Bitcoin"><br>
       <b>Bitcoin</b><br>
       <code>bc1qdf9wryj6tnyyr7ed4dkfv03nn0dxjf27xshfcr</code>
     </td>
     <td align="center">
-      <img src="donate/ethereum.jpg" width="220" alt="QR-код Ethereum"><br>
+      <img src="docs/screenshots/donate/ethereum.jpg" width="220" alt="QR-код Ethereum"><br>
       <b>Ethereum</b><br>
       <code>0xE22FAB5337A5506D9e7Ef9D4914De4d963Fbbf88</code>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <img src="donate/solana.jpg" width="220" alt="QR-код Solana"><br>
+      <img src="docs/screenshots/donate/solana.jpg" width="220" alt="QR-код Solana"><br>
       <b>Solana</b><br>
       <code>7XcNM2M9rndFbJdjRtyycxkQXq8dPXEP87toiQX4EZfx</code>
     </td>
     <td align="center">
-      <img src="donate/tron.jpg" width="220" alt="QR-код Tron"><br>
+      <img src="docs/screenshots/donate/tron.jpg" width="220" alt="QR-код Tron"><br>
       <b>Tron</b><br>
       <code>TCYpTxSmdPN8p4fmRwtPGk3HHBf77FypeA</code>
     </td>

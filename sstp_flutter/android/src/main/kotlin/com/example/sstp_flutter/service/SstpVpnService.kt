@@ -16,6 +16,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.service.quicksettings.TileService
 import androidx.core.app.NotificationCompat
@@ -139,6 +140,11 @@ internal class SstpVpnService : VpnService() {
     // VPN. Reset on every user-initiated connect/disconnect.
     private var revokeRecoveryAttempts = 0
 
+    // Held for the whole lifetime of a tunnel. Without it the CPU is free to
+    // suspend while the screen is off, which stalls the SSTP keepalive and the
+    // PPP timers until the server drops the session.
+    private var wakeLock: PowerManager.WakeLock? = null
+
     private fun setRootState(state: Boolean) {
         setBooleanPrefValue(state, OscPrefKey.ROOT_STATE, prefs)
     }
@@ -149,6 +155,36 @@ internal class SstpVpnService : VpnService() {
                 ComponentName(this, SstpTileService::class.java)
             )
         }
+    }
+
+    /**
+     * Keeps the CPU awake for the duration of the tunnel. A partial wake lock is
+     * enough: the screen and radio stay under system control, only the CPU is
+     * kept from suspending so the SSTP keepalive and the PPP timers keep running
+     * while the screen is off.
+     */
+    private fun acquireWakeLock() {
+        val lock = wakeLock ?: run {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "SoftSSTP::VpnWakeLock"
+            ).apply { setReferenceCounted(false) }.also { wakeLock = it }
+        }
+        try {
+            if (!lock.isHeld) lock.acquire()
+        } catch (e: Exception) {
+            ConnectionLog.append("ERROR", "Could not acquire wake lock: ${e.message}")
+        }
+    }
+
+    private fun releaseWakeLock() {
+        val lock = wakeLock ?: return
+        try {
+            if (lock.isHeld) lock.release()
+        } catch (_: Exception) {
+        }
+        wakeLock = null
     }
 
     override fun onCreate() {
@@ -244,6 +280,7 @@ internal class SstpVpnService : VpnService() {
                 notificationStatus = CONNECTION_STATUS_CONNECTING
                 notificationSpeed = ""
                 beForegrounded()
+                acquireWakeLock()
                 resetReconnectionLife(prefs)
                 // A new attempt clears any previous failure.
                 connectionErrorCode = ""
@@ -637,6 +674,7 @@ internal class SstpVpnService : VpnService() {
         foregroundBuilder = null
         // Final guard: make sure the interface is gone before the service stops.
         controlClient?.closeTerminals()
+        releaseWakeLock()
         stopForeground(true)
         stopSelf()
     }
@@ -768,6 +806,7 @@ internal class SstpVpnService : VpnService() {
 
         scope.cancel()
 
+        releaseWakeLock()
         setRootState(false)
         prefs.unregisterOnSharedPreferenceChangeListener(listener)
     }

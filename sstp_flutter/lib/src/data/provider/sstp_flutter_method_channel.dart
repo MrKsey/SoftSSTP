@@ -226,6 +226,21 @@ class MethodChannelSstpFlutter {
     return path ?? "";
   }
 
+  /// True when the system has exempted the app from battery optimization.
+  Future<bool> isIgnoringBatteryOptimizations() async {
+    final result =
+        await methodChannelCaller.invokeMethod("isIgnoringBatteryOptimizations");
+    return result == true;
+  }
+
+  /// Asks the system to exempt the app from battery optimization, so the tunnel
+  /// is not stopped while the app is in the background.
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    final result = await methodChannelCaller
+        .invokeMethod("requestIgnoreBatteryOptimizations");
+    return result == true;
+  }
+
   static final MethodChannelSstpFlutter _instance =
       MethodChannelSstpFlutter.internal();
   factory MethodChannelSstpFlutter() => _instance;

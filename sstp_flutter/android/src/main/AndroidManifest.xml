@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- Keeps the CPU running while the tunnel is up, so the SSTP keepalive and
+         PPP timers survive the screen being turned off. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets the app ask the user to exempt it from battery optimization, which
+         otherwise lets the system kill the tunnel in the background. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
    <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"

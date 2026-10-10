@@ -6,6 +6,7 @@ import '../models/vpn_profile.dart';
 import '../providers/vpn_provider.dart';
 import '../services/app_info.dart';
 import '../services/link_launcher.dart';
+import '../services/profile_transfer.dart';
 import '../theme/app_theme.dart';
 import '../widgets/public_profile_badge.dart';
 import 'log_screen.dart';
@@ -56,15 +57,40 @@ class GeneralSettingsScreen extends StatefulWidget {
   State<GeneralSettingsScreen> createState() => _GeneralSettingsScreenState();
 }
 
-class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
+class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
+    with WidgetsBindingObserver {
   AppInfo? _appInfo;
   bool _connectionLogEnabled = true;
+  bool _ignoringBatteryOptimizations = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadAppInfo();
     _connectionLogEnabled = context.read<VpnProvider>().connectionLogEnabled;
+    _loadBatteryOptimizationStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The exemption is confirmed in a system dialog, so the state can only
+    // change while the app is in the background.
+    if (state == AppLifecycleState.resumed) {
+      _loadBatteryOptimizationStatus();
+    }
+  }
+
+  Future<void> _loadBatteryOptimizationStatus() async {
+    final provider = context.read<VpnProvider>();
+    final ignoring = await provider.isIgnoringBatteryOptimizations();
+    if (mounted) setState(() => _ignoringBatteryOptimizations = ignoring);
   }
 
   Future<void> _loadAppInfo() async {
@@ -141,6 +167,122 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
     );
   }
 
+  /// Warns that an exported profile keeps its password in clear text. Returns
+  /// true when the user chose to continue.
+  Future<bool> _confirmPasswordWarning(String action) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        title: Text('$action profile'),
+        content: Text(
+          "The file contains this profile's password in clear text. Anyone who "
+          'can open the file can read it, so keep it somewhere safe.',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _exportProfile(VpnProfile profile) async {
+    if (!await _confirmPasswordWarning('Export')) return;
+    try {
+      final destination = await ProfileTransfer.exportToFile(profile);
+      if (!mounted || destination == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Exported "${ProfileTransfer.fileNameFor(profile)}"'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not export the profile: $e')),
+      );
+    }
+  }
+
+  Future<void> _shareProfile(VpnProfile profile) async {
+    if (!await _confirmPasswordWarning('Share')) return;
+    try {
+      await ProfileTransfer.shareProfile(profile);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share the profile: $e')),
+      );
+    }
+  }
+
+  Future<void> _importProfile() async {
+    final provider = context.read<VpnProvider>();
+    try {
+      final profiles = await ProfileTransfer.pickAndDecode();
+      if (!mounted || profiles == null) return;
+      final added = await provider.importProfiles(profiles);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            added == 1 ? 'Imported 1 profile' : 'Imported $added profiles',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      setState(() {});
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import the profile: $e')),
+      );
+    }
+  }
+
+  Future<void> _handleBatteryOptimizationTap() async {
+    final provider = context.read<VpnProvider>();
+    if (_ignoringBatteryOptimizations) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('SoftSSTP is already exempt from battery optimization'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final requested = await provider.requestIgnoreBatteryOptimizations();
+    if (!mounted) return;
+    if (!requested) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the battery optimization settings'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    // The user confirms in a system dialog; the state is re-read when they
+    // return to the app.
+    await _loadBatteryOptimizationStatus();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -166,6 +308,10 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
                 _buildSectionTitle('Diagnostics'),
                 const SizedBox(height: 16),
                 _buildDiagnosticsSection(provider),
+                const SizedBox(height: 32),
+                _buildSectionTitle('Background'),
+                const SizedBox(height: 16),
+                _buildBackgroundSection(),
                 const SizedBox(height: 32),
                 _buildSectionTitle('Donate'),
                 const SizedBox(height: 16),
@@ -245,6 +391,33 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
                   Expanded(
                     child: Text(
                       'Add public profile',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Divider(color: AppTheme.dividerColor, height: 20),
+          InkWell(
+            onTap: _importProfile,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.file_download_outlined,
+                    color: AppTheme.primaryColor,
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Import profile',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
@@ -347,6 +520,12 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
               case 'edit':
                 _openProfile(profile.id);
                 break;
+              case 'export':
+                _exportProfile(profile);
+                break;
+              case 'share':
+                _shareProfile(profile);
+                break;
               case 'activate':
                 provider.selectProfile(profile.id);
                 break;
@@ -357,6 +536,8 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
           },
           itemBuilder: (context) => [
             const PopupMenuItem(value: 'edit', child: Text('Edit')),
+            const PopupMenuItem(value: 'export', child: Text('Export')),
+            const PopupMenuItem(value: 'share', child: Text('Share')),
             if (!isActive)
               const PopupMenuItem(value: 'activate', child: Text('Set active')),
             const PopupMenuItem(value: 'delete', child: Text('Delete')),
@@ -527,6 +708,60 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
             url: 'https://www.vpngate.net/en/',
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBackgroundSection() {
+    final exempt = _ignoringBatteryOptimizations;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 19),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: InkWell(
+        onTap: _handleBatteryOptimizationTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Icon(
+                exempt ? Icons.battery_saver : Icons.battery_alert_outlined,
+                color: exempt ? AppTheme.primaryColor : AppTheme.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Battery optimization',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      exempt
+                          ? 'Exempt — the VPN keeps running with the screen off'
+                          : 'Not exempt — Android may stop the VPN in the '
+                              'background',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+            ],
+          ),
+        ),
       ),
     );
   }

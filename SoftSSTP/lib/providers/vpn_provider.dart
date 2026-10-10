@@ -390,6 +390,18 @@ class VpnProvider extends ChangeNotifier {
 
   String _newProfileId() => DateTime.now().microsecondsSinceEpoch.toString();
 
+  /// Like [_newProfileId] but guaranteed not to collide with an existing
+  /// profile, so an import can never overwrite a local profile.
+  String _freshProfileId() {
+    var candidate = _newProfileId();
+    var suffix = 0;
+    while (_profiles.any((p) => p.id == candidate)) {
+      suffix++;
+      candidate = '${_newProfileId()}_$suffix';
+    }
+    return candidate;
+  }
+
   /// Builds a profile snapshot from the current working settings.
   VpnProfile _captureActiveProfile() => VpnProfile(
         id: _activeProfileId,
@@ -626,6 +638,38 @@ class VpnProvider extends ChangeNotifier {
     }
     await _persistProfiles();
     notifyListeners();
+  }
+
+  /// Adds [incoming] as brand new profiles, leaving the existing list untouched.
+  ///
+  /// Every profile gets a fresh id, so an imported profile can never overwrite a
+  /// local one. When the device reports which apps are installed, the imported
+  /// app allowlist is reduced to the ones actually present. Returns how many
+  /// profiles were added.
+  Future<int> importProfiles(List<VpnProfile> incoming) async {
+    if (incoming.isEmpty) return 0;
+
+    Set<String>? installedPackages;
+    final installedApps = await getInstalledApps();
+    if (installedApps.isNotEmpty) {
+      installedPackages =
+          installedApps.map((app) => app.packageName).whereType<String>().toSet();
+    }
+
+    for (final profile in incoming) {
+      final json = profile.toJson();
+      json['id'] = _freshProfileId();
+      final imported = VpnProfile.fromJson(json);
+      if (installedPackages != null) {
+        imported.allowedApps =
+            imported.allowedApps.where(installedPackages.contains).toList();
+      }
+      _profiles.add(imported);
+    }
+
+    await _persistProfiles();
+    notifyListeners();
+    return incoming.length;
   }
 
   /// Makes [id] the active profile. When a tunnel is already up, it is rebuilt
@@ -1023,6 +1067,15 @@ class VpnProvider extends ChangeNotifier {
       return false;
     }
   }
+
+  /// True when the system has exempted SoftSSTP from battery optimization.
+  Future<bool> isIgnoringBatteryOptimizations() =>
+      _sstpFlutter.isIgnoringBatteryOptimizations();
+
+  /// Asks the system to exempt SoftSSTP from battery optimization, so Android
+  /// does not stop the tunnel while the app is in the background.
+  Future<bool> requestIgnoreBatteryOptimizations() =>
+      _sstpFlutter.requestIgnoreBatteryOptimizations();
 
   Future<void> connect() async {
     // A fresh user-initiated connect restarts the Auto negotiation from the top

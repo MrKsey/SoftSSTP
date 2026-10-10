@@ -16,7 +16,8 @@ from PIL import Image, ImageDraw
 import generate_icons as g
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.join(HERE, "..", "SoftSSTP")
+# This script lives in SoftSSTP/tools/icon, so the app root is two levels up.
+APP = os.path.join(HERE, "..", "..")
 S = g.S
 
 # Доли габарита ключа: safe-зона для адаптивной, крупнее для legacy
