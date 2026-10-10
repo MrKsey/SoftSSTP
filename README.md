@@ -137,6 +137,37 @@ Pushing to `main` or a `v*` tag triggers CI, which builds both architectures and
 publishes a GitHub Release. The version comes from a pushed tag or grows from the
 last one. Builds are signed with a keystore kept in repository secrets.
 
+## Donate
+
+You can support the project by sending a donation to any of the wallets below.
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="donate/bitcoin.jpg" width="220" alt="Bitcoin QR code"><br>
+      <b>Bitcoin</b><br>
+      <code>bc1qdf9wryj6tnyyr7ed4dkfv03nn0dxjf27xshfcr</code>
+    </td>
+    <td align="center">
+      <img src="donate/ethereum.jpg" width="220" alt="Ethereum QR code"><br>
+      <b>Ethereum</b><br>
+      <code>0xE22FAB5337A5506D9e7Ef9D4914De4d963Fbbf88</code>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="donate/solana.jpg" width="220" alt="Solana QR code"><br>
+      <b>Solana</b><br>
+      <code>7XcNM2M9rndFbJdjRtyycxkQXq8dPXEP87toiQX4EZfx</code>
+    </td>
+    <td align="center">
+      <img src="donate/tron.jpg" width="220" alt="Tron QR code"><br>
+      <b>Tron</b><br>
+      <code>TCYpTxSmdPN8p4fmRwtPGk3HHBf77FypeA</code>
+    </td>
+  </tr>
+</table>
+
 ## License
 
 SoftSSTP is released under the GNU General Public License v3.0; see

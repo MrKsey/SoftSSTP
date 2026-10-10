@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/vpn_profile.dart';
@@ -10,6 +11,38 @@ import '../widgets/public_profile_badge.dart';
 import 'log_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_profiles_screen.dart';
+
+/// A cryptocurrency wallet shown in the Donate section.
+class _DonationEntry {
+  const _DonationEntry(this.name, this.address, this.iconAsset);
+
+  final String name;
+  final String address;
+  final String iconAsset;
+}
+
+const List<_DonationEntry> _donations = [
+  _DonationEntry(
+    'Bitcoin',
+    'bc1qdf9wryj6tnyyr7ed4dkfv03nn0dxjf27xshfcr',
+    'assets/images/bitcoin.png',
+  ),
+  _DonationEntry(
+    'Ethereum',
+    '0xE22FAB5337A5506D9e7Ef9D4914De4d963Fbbf88',
+    'assets/images/ethereum.png',
+  ),
+  _DonationEntry(
+    'Solana',
+    '7XcNM2M9rndFbJdjRtyycxkQXq8dPXEP87toiQX4EZfx',
+    'assets/images/solana.png',
+  ),
+  _DonationEntry(
+    'Tron',
+    'TCYpTxSmdPN8p4fmRwtPGk3HHBf77FypeA',
+    'assets/images/tron.png',
+  ),
+];
 
 /// Global settings: profile management, Diagnostics and About.
 ///
@@ -97,6 +130,17 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
     }
   }
 
+  Future<void> _copyAddress(String address) async {
+    await Clipboard.setData(ClipboardData(text: address));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Address copied to clipboard'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -122,6 +166,10 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
                 _buildSectionTitle('Diagnostics'),
                 const SizedBox(height: 16),
                 _buildDiagnosticsSection(provider),
+                const SizedBox(height: 32),
+                _buildSectionTitle('Donate'),
+                const SizedBox(height: 16),
+                _buildDonateSection(),
                 const SizedBox(height: 32),
                 _buildSectionTitle('About'),
                 const SizedBox(height: 16),
@@ -479,6 +527,68 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen> {
             url: 'https://www.vpngate.net/en/',
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDonateSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < _donations.length; i++) ...[
+            if (i > 0) Divider(color: AppTheme.dividerColor, height: 1),
+            _buildDonateRow(_donations[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDonateRow(_DonationEntry entry) {
+    return InkWell(
+      onTap: () => _copyAddress(entry.address),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Image.asset(entry.iconAsset, width: 36, height: 36),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.name,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    entry.address,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(Icons.copy_outlined, size: 18, color: AppTheme.textSecondary),
+          ],
+        ),
       ),
     );
   }

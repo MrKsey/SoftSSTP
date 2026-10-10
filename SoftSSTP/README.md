@@ -11,11 +11,10 @@ VPN Azure.
 
 If the project is useful to you, you can support its development.
 
-TRX (Tron): `TRxVSHcoADZnBfztFmFb2TQopusAwWYEVR`
-
-BTC (Bitcoin): `bc1qnjnvzsa5avgj7n0uy383cv5zdxfjnvvp257egm`
-
-XRP (Ripple): `rHnZrb5o2bi9sHsbux5e3vtraaPtZ32WQF`
+- Bitcoin: `bc1qdf9wryj6tnyyr7ed4dkfv03nn0dxjf27xshfcr`
+- Ethereum: `0xE22FAB5337A5506D9e7Ef9D4914De4d963Fbbf88`
+- Solana: `7XcNM2M9rndFbJdjRtyycxkQXq8dPXEP87toiQX4EZfx`
+- Tron: `TCYpTxSmdPN8p4fmRwtPGk3HHBf77FypeA`
 
 ## License
 
