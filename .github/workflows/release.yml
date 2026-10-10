@@ -1,11 +1,12 @@
 name: Build & Release
 
-# Builds the SoftSSTP Android app and publishes automatic GitHub Releases.
-# - Every push to `main` builds and publishes a release. The version is
-#   auto-incremented from the highest existing tag (1.0.0, 1.0.1, ...).
-# - Pushing a tag like `v1.2.3` publishes that exact version.
-# - Pushes that only touch documentation (*.md, LICENSE, .gitignore) are ignored,
-#   so README-only changes never trigger a build.
+# Builds the SoftSSTP Android app and publishes GitHub Releases.
+# - The version lives in SoftSSTP/pubspec.yaml (name and code) and is the single
+#   source of truth. Bump it before tagging a release.
+# - Pushing a `v*` tag builds that version and publishes a GitHub Release. The
+#   tag must match the version in pubspec.yaml.
+# - Pushing to `main` only builds (no release), so breakage shows up early.
+# - Documentation and F-Droid metadata changes do not trigger a build.
 on:
   push:
     branches: [main]
@@ -17,16 +18,14 @@ on:
       - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
+      - 'fastlane/**'
+      - 'fdroid/**'
   workflow_dispatch:
     inputs:
-      version_name:
-        description: 'Override version name (e.g. 1.2.3). Defaults to pubspec.yaml'
-        required: false
-        default: ''
       publish_release:
-        description: 'Create a GitHub Release'
+        description: 'Create a GitHub Release for the current version'
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -57,6 +56,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.47.6'
           cache: true
 
       - name: Resolve version
@@ -64,39 +64,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OVERRIDE="${{ github.event.inputs.version_name }}"
+          # pubspec.yaml is the single source of truth for both the version name
+          # and the version code (the number after "+").
+          PUBSPEC_VERSION=$(grep -E '^version:' SoftSSTP/pubspec.yaml | head -n1 \
+            | sed -E 's/version:[[:space:]]*//')
+          VERSION="${PUBSPEC_VERSION%%+*}"
+          BUILD="${PUBSPEC_VERSION##*+}"
+
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            TAG="${GITHUB_REF_NAME}"
-          elif [[ -n "${OVERRIDE}" ]]; then
-            VERSION="${OVERRIDE}"
-            TAG="v${VERSION}"
-          else
-            # Auto-increment the patch number from the highest existing version
-            # tag, so releases go 1.0.0, 1.0.1, 1.0.2, ...
-            LATEST=$(git tag -l 'v[0-9]*' \
-              | sed -E 's/^v//' \
-              | sed -E 's/-.*$//' \
-              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
-              | sort -V \
-              | tail -n1 || true)
-            if [[ -z "${LATEST}" ]]; then
-              # First release in this repository: take the version from
-              # pubspec.yaml verbatim (no increment).
-              VERSION=$(grep -E '^version:' SoftSSTP/pubspec.yaml | head -n1 \
-                | sed -E 's/version:[[:space:]]*//' | sed -E 's/\+.*//')
-            else
-              MAJOR=$(echo "${LATEST}" | cut -d. -f1)
-              MINOR=$(echo "${LATEST}" | cut -d. -f2)
-              PATCH=$(echo "${LATEST}" | cut -d. -f3)
-              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "${TAG_VERSION}" != "${VERSION}" ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match pubspec.yaml version ${VERSION}. Bump SoftSSTP/pubspec.yaml before tagging."
+              exit 1
             fi
+            TAG="${GITHUB_REF_NAME}"
+          else
             TAG="v${VERSION}"
           fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "build_number=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "Resolved: version=${VERSION} tag=${TAG} build=${GITHUB_RUN_NUMBER}"
+          echo "Resolved: version=${VERSION} build=${BUILD} tag=${TAG}"
 
       - name: Restore signing keystore
         working-directory: SoftSSTP/android
@@ -127,11 +116,11 @@ jobs:
       - name: Build APKs (arm64 + arm)
         working-directory: SoftSSTP
         run: |
+          # The version comes from pubspec.yaml, so no --build-name/--build-number
+          # flags are passed; the tag check above keeps them in sync.
           flutter build apk --release \
             --split-per-abi \
-            --target-platform android-arm64,android-arm \
-            --build-name=${{ steps.version.outputs.version }} \
-            --build-number=${{ steps.version.outputs.build_number }}
+            --target-platform android-arm64,android-arm
 
       - name: Collect and rename APKs
         working-directory: SoftSSTP
@@ -151,7 +140,7 @@ jobs:
           path: SoftSSTP/out/SoftSSTP-*.apk
 
       - name: Publish GitHub Release
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish_release == 'true' }}
+        if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}

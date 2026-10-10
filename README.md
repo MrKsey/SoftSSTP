@@ -22,8 +22,6 @@ Works with any server that speaks Microsoft SSTP (MS-SSTP), most often
 
 ## Based on
 
-SoftSSTP is a fork of [CluvexStudio/ZedPass](https://github.com/CluvexStudio/ZedPass).
-
 | Layer | Project | Role |
 |-------|---------|------|
 | SSTP / PPP / TLS | [kittoku/Open-SSTP-Client](https://github.com/kittoku/Open-SSTP-Client) (MIT) | Original Android SSTP client; the protocol engine comes from it. |
@@ -133,9 +131,10 @@ flutter build apk --release --split-per-abi \
 
 APKs are written to `build/app/outputs/apk/release/`.
 
-Pushing to `main` or a `v*` tag triggers CI, which builds both architectures and
-publishes a GitHub Release. The version comes from a pushed tag or grows from the
-last one. Builds are signed with a keystore kept in repository secrets.
+CI builds both architectures on every push to `main` and publishes a GitHub
+Release when a `v*` tag is pushed. The version name and code live in
+`pubspec.yaml`; bump them, commit and tag `vX.Y.Z` to release. Builds are signed
+with a keystore kept in repository secrets.
 
 ## Donate
 

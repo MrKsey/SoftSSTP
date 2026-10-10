@@ -1,0 +1,1 @@
+SoftSSTP is now on F-Droid. An open-source SSTP VPN client with multiple profiles, VPN Gate public servers, split tunneling, auto-reconnect and recovery on network change. This build uses a separate version code per architecture.

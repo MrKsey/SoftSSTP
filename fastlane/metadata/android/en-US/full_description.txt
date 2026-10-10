@@ -1,0 +1,23 @@
+SoftSSTP is an open-source SSTP VPN client for Android, built with Flutter and Material Design 3. It works with any server that speaks Microsoft SSTP (MS-SSTP), most often SoftEther VPN Server and VPN Azure Cloud.
+
+Features
+- Material Design 3 with Material You theming; day, night and auto skin.
+- Multiple VPN profiles, each with its own server, DNS, proxy, PPP, routing, split tunneling, reconnection and advanced settings, plus a name and icon colour.
+- Public profiles from VPN Gate: browse MS-SSTP servers with country, line quality and ping, then add one with a tap (login "vpn", password "vpn").
+- Connect and disconnect with live status on the home screen and in a notification.
+- Live speed (bit rates) and total traffic (byte units).
+- Public IP and geolocation before and after connecting, plus the internal IP assigned by the server.
+- Split tunneling: route only the apps you pick, with a searchable list.
+- Auto-reconnect with configurable retry count and interval.
+- VPN-slot recovery: if another VPN takes the slot, SoftSSTP reclaims it and reconnects.
+- Recovery on network change: switching between Wi-Fi and mobile data rebuilds the tunnel automatically.
+- Custom DNS, HTTP proxy, custom SNI, SSL version, hostname and certificate verification, MTU/MRU, auth protocol, IPv4/IPv6, static IP and routing.
+
+Requirements
+- Android 8.0 (API 26) or newer.
+- A reachable SSTP server with DHCP enabled.
+- PAP and MS-CHAPv2 authentication (no EAP).
+
+SoftSSTP is a fork of CluvexStudio/ZedPass. The SSTP/PPP/TLS engine comes from kittoku/Open-SSTP-Client (MIT).
+
+License: GNU General Public License v3.0.

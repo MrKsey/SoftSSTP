@@ -1,4 +1,4 @@
-import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import com.android.build.gradle.internal.api.ApkVariantOutputImpl
 import java.util.Properties
 import java.io.FileInputStream
 
@@ -62,15 +62,24 @@ android {
         }
     }
 
-    // Name the produced APKs clearly, e.g.
-    //   SoftSSTP-1.0.0-arm64-v8a.apk
-    //   SoftSSTP-1.0.0-armeabi-v7a.apk
-    //   SoftSSTP-1.0.0-universal.apk
+    // Name the produced APKs clearly and give every ABI its own version code
+    // (versionCode * 10 + slot) so F-Droid can tell the split APKs apart. The
+    // slot numbers must stay in sync with VercodeOperation in the F-Droid
+    // recipe (fdroid/io.github.mrksey.softsstp.yml).
     applicationVariants.all {
         val variantVersionName = versionName
+        val variantVersionCode = versionCode
         outputs.all {
-            val output = this as BaseVariantOutputImpl
+            val output = this as ApkVariantOutputImpl
             val abi = output.getFilter("ABI") ?: "universal"
+            val abiSlot = when (abi) {
+                "armeabi-v7a" -> 1
+                "arm64-v8a" -> 2
+                else -> 0
+            }
+            if (abiSlot > 0) {
+                output.versionCodeOverride = variantVersionCode * 10 + abiSlot
+            }
             output.outputFileName = "SoftSSTP-$variantVersionName-$abi.apk"
         }
     }

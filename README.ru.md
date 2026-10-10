@@ -22,8 +22,6 @@
 
 ## На основе
 
-SoftSSTP - форк проекта [CluvexStudio/ZedPass](https://github.com/CluvexStudio/ZedPass).
-
 | Слой | Проект | Роль |
 |------|--------|------|
 | SSTP / PPP / TLS | [kittoku/Open-SSTP-Client](https://github.com/kittoku/Open-SSTP-Client) (MIT) | Исходный Android-клиент SSTP, отсюда взят движок протокола. |
@@ -138,9 +136,10 @@ flutter build apk --release --split-per-abi \
 
 APK появятся в `build/app/outputs/apk/release/`.
 
-Пуш в `main` или тег `v*` запускает CI. Он собирает обе архитектуры и публикует
-GitHub Release. Версия берётся из отправленного тега или растёт от последней
-существующей. Сборки подписываются ключом из секретов репозитория.
+CI собирает обе архитектуры при каждом пуше в `main`, а GitHub Release публикует
+при пуше тега `v*`. Версия (имя и код) живёт в `pubspec.yaml`: поднимите её,
+закоммитьте и поставьте тег `vX.Y.Z`. Сборки подписываются ключом из секретов
+репозитория.
 
 ## Донаты
 
