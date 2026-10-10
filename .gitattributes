@@ -1,0 +1,21 @@
+# Normalize line endings so CI (Linux) gets LF for scripts and text files.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Gradle wrapper and shell scripts must be LF.
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Binary assets — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.jar binary
+*.jks binary
+*.keystore binary

@@ -1,0 +1,40 @@
+name: softsstp
+description: "SoftSSTP - Secure SSTP VPN Client"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sstp_flutter: ^1.3.0
+  shared_preferences: ^2.5.3
+  provider: ^6.1.5
+
+dependency_overrides:
+  # Use the locally patched plugin (TLS 1.3 handshake fix) instead of the
+  # stale 1.3.0 release from pub.dev.
+  sstp_flutter:
+    path: ../sstp_flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "assets/icon/icon_background.png"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  adaptive_icon_monochrome: "assets/icon/icon_monochrome.png"
+  min_sdk_android: 26
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

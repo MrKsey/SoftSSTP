@@ -1,0 +1,29 @@
+# Local toolchains / SDKs — not part of the project sources
+/.tools/
+/Open-SSTP-Client/
+/.git-backup/
+
+# AI assistant config / scratch
+/.agents/
+/.claude/
+/.koda/
+KODA-TODO.md
+
+# Local scratch
+/api.global-check.link.json
+*.log
+build_err.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Signing secrets — never commit these
+key.properties
+*.jks
+*.keystore

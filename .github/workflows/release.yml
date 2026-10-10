@@ -1,0 +1,161 @@
+name: Build & Release
+
+# Builds the SoftSSTP Android app and publishes automatic GitHub Releases.
+# - Every push to `main` builds and publishes a release. The version is
+#   auto-incremented from the highest existing tag (1.0.0, 1.0.1, ...).
+# - Pushing a tag like `v1.2.3` publishes that exact version.
+# - Pushes that only touch documentation (*.md, LICENSE, .gitignore) are ignored,
+#   so README-only changes never trigger a build.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.MD'
+      - 'README*'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Override version name (e.g. 1.2.3). Defaults to pubspec.yaml'
+        required: false
+        default: ''
+      publish_release:
+        description: 'Create a GitHub Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build release APKs
+    runs-on: ubuntu-latest
+
+    env:
+      # Empty unless the KEYSTORE_BASE64 secret is configured. Used to decide
+      # whether the stable release keystore can be restored.
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          OVERRIDE="${{ github.event.inputs.version_name }}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ -n "${OVERRIDE}" ]]; then
+            VERSION="${OVERRIDE}"
+            TAG="v${VERSION}"
+          else
+            # Auto-increment the patch number from the highest existing version
+            # tag, so releases go 1.0.0, 1.0.1, 1.0.2, ...
+            LATEST=$(git tag -l 'v[0-9]*' \
+              | sed -E 's/^v//' \
+              | sed -E 's/-.*$//' \
+              | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V \
+              | tail -n1 || true)
+            if [[ -z "${LATEST}" ]]; then
+              LATEST=$(grep -E '^version:' SoftSSTP/pubspec.yaml | head -n1 \
+                | sed -E 's/version:[[:space:]]*//' | sed -E 's/\+.*//')
+            fi
+            MAJOR=$(echo "${LATEST}" | cut -d. -f1)
+            MINOR=$(echo "${LATEST}" | cut -d. -f2)
+            PATCH=$(echo "${LATEST}" | cut -d. -f3)
+            VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            TAG="v${VERSION}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "build_number=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Resolved: version=${VERSION} tag=${TAG} build=${GITHUB_RUN_NUMBER}"
+
+      - name: Restore signing keystore
+        working-directory: SoftSSTP/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::warning::KEYSTORE_BASE64 is not set - the APK will be signed with the debug key."
+            exit 0
+          fi
+          echo "${KEYSTORE_BASE64}" | base64 -d > app/softsstp-release.jks
+          cat > key.properties <<EOF
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          storeFile=softsstp-release.jks
+          EOF
+          echo "Release keystore restored."
+
+      - name: Get dependencies
+        working-directory: SoftSSTP
+        run: flutter pub get
+
+      - name: Generate app icons
+        working-directory: SoftSSTP
+        run: dart run flutter_launcher_icons
+
+      - name: Build APKs (arm64 + arm)
+        working-directory: SoftSSTP
+        run: |
+          flutter build apk --release \
+            --split-per-abi \
+            --target-platform android-arm64,android-arm \
+            --build-name=${{ steps.version.outputs.version }} \
+            --build-number=${{ steps.version.outputs.build_number }}
+
+      - name: Collect and rename APKs
+        working-directory: SoftSSTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ steps.version.outputs.version }}"
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "out/SoftSSTP-${V}-arm64-v8a.apk"
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "out/SoftSSTP-${V}-armeabi-v7a.apk"
+          ls -la out
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoftSSTP-${{ steps.version.outputs.version }}-apks
+          path: SoftSSTP/out/SoftSSTP-*.apk
+
+      - name: Publish GitHub Release
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: SoftSSTP ${{ steps.version.outputs.version }}
+          files: SoftSSTP/out/SoftSSTP-*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
