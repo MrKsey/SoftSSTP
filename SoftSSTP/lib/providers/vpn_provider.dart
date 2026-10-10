@@ -640,6 +640,21 @@ class VpnProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Moves the profile at [oldIndex] to [newIndex] and persists the new order.
+  ///
+  /// [newIndex] is already the final position, as delivered by the
+  /// ReorderableListView `onReorderItem` callback.
+  Future<void> reorderProfiles(int oldIndex, int newIndex) async {
+    if (oldIndex < 0 || oldIndex >= _profiles.length) return;
+    if (newIndex < 0 || newIndex >= _profiles.length) return;
+    if (newIndex == oldIndex) return;
+
+    final profile = _profiles.removeAt(oldIndex);
+    _profiles.insert(newIndex, profile);
+    await _persistProfiles();
+    notifyListeners();
+  }
+
   /// Adds [incoming] as brand new profiles, leaving the existing list untouched.
   ///
   /// Every profile gets a fresh id, so an imported profile can never overwrite a

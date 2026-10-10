@@ -55,7 +55,6 @@ class _LogScreenState extends State<LogScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Log copied to clipboard'),
-        backgroundColor: AppTheme.cardColor,
       ),
     );
   }

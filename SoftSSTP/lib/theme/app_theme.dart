@@ -69,10 +69,12 @@ class AppTheme {
       // text colours are set explicitly so a message is never dark-on-dark in
       // the night skin (the default text colour comes from the colour scheme,
       // which used to be dark even in light mode).
+      // Snackbars use the accent colour, so a message always looks the same
+      // wherever it is shown. Individual calls must not override it.
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: cardColor,
-        contentTextStyle: TextStyle(color: textPrimary, fontSize: 14),
-        actionTextColor: primaryColor,
+        backgroundColor: primaryColor,
+        contentTextStyle: const TextStyle(color: Colors.white, fontSize: 14),
+        actionTextColor: Colors.white,
         behavior: SnackBarBehavior.floating,
       ),
       dialogTheme: DialogThemeData(

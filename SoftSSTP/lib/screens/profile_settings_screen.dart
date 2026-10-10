@@ -880,7 +880,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Saved "${name.trim()}"'),
-        backgroundColor: AppTheme.primaryColor,
       ),
     );
   }
@@ -1185,7 +1184,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Certificate added: $certPath'),
-                backgroundColor: AppTheme.primaryColor,
               ),
             );
           }
@@ -1246,7 +1244,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Select at least one application for App Routing'),
-          backgroundColor: AppTheme.cardColor,
         ),
       );
       return;
@@ -1305,7 +1302,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           content: Text(
             _isNew ? 'Profile added successfully' : 'Profile saved successfully',
           ),
-          backgroundColor: AppTheme.primaryColor,
         ),
       );
       Navigator.pop(context);

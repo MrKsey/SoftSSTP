@@ -42,69 +42,83 @@ class ProfilePickerScreen extends StatelessWidget {
       body: Consumer<VpnProvider>(
         builder: (context, provider, child) {
           final profiles = provider.profiles;
-          return ListView(
+          return ReorderableListView(
             padding: const EdgeInsets.all(20),
-            children: [
-              for (final profile in profiles)
-                _ProfileTile(
-                  profile: profile,
-                  active: profile.id == provider.activeProfileId,
-                  onTap: () async {
-                    await provider.selectProfile(profile.id);
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  onEdit: () {
-                    Navigator.push(
+            // A long press anywhere on a tile starts the drag on every platform,
+            // instead of the desktop-only drag handle.
+            buildDefaultDragHandles: false,
+            onReorderItem: (oldIndex, newIndex) =>
+                provider.reorderProfiles(oldIndex, newIndex),
+            footer: Column(
+              children: [
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) =>
-                            ProfileSettingsScreen(profileId: profile.id),
+                        builder: (context) => const ProfileSettingsScreen(),
                       ),
                     );
                   },
-                ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const ProfileSettingsScreen(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add profile'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: AppTheme.primaryColor),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  );
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add profile'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primaryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: BorderSide(color: AppTheme.primaryColor),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const PublicProfilesScreen(),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PublicProfilesScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.public),
+                  label: const Text('Add public profile'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.primaryColor,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: AppTheme.primaryColor),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  );
-                },
-                icon: const Icon(Icons.public),
-                label: const Text('Add public profile'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primaryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: BorderSide(color: AppTheme.primaryColor),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-              ),
+              ],
+            ),
+            children: [
+              for (var i = 0; i < profiles.length; i++)
+                ReorderableDelayedDragStartListener(
+                  key: ValueKey(profiles[i].id),
+                  index: i,
+                  child: _ProfileTile(
+                    profile: profiles[i],
+                    active: profiles[i].id == provider.activeProfileId,
+                    onTap: () async {
+                      await provider.selectProfile(profiles[i].id);
+                      if (context.mounted) Navigator.pop(context);
+                    },
+                    onEdit: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ProfileSettingsScreen(
+                            profileId: profiles[i].id,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
             ],
           );
         },

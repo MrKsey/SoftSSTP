@@ -161,7 +161,6 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${server.displayHost} is already in your profiles'),
-          backgroundColor: AppTheme.cardColor,
         ),
       );
       return;

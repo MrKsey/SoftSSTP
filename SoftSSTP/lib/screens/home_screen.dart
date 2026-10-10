@@ -393,7 +393,6 @@ class _HomeScreenState extends State<HomeScreen>
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Please configure server settings first'),
-              backgroundColor: AppTheme.cardColor,
             ),
           );
         }

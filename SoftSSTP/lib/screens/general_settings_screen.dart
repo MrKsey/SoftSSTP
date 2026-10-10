@@ -351,10 +351,29 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
       ),
       child: Column(
         children: [
-          for (final profile in profiles) ...[
-            _buildProfileRow(provider, profile),
-            Divider(color: AppTheme.dividerColor, height: 20),
-          ],
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            // A long press anywhere on a row starts the drag on every platform,
+            // instead of the desktop-only drag handle.
+            buildDefaultDragHandles: false,
+            itemCount: profiles.length,
+            onReorderItem: (oldIndex, newIndex) =>
+                provider.reorderProfiles(oldIndex, newIndex),
+            itemBuilder: (context, index) {
+              final profile = profiles[index];
+              return ReorderableDelayedDragStartListener(
+                key: ValueKey(profile.id),
+                index: index,
+                child: Column(
+                  children: [
+                    _buildProfileRow(provider, profile),
+                    Divider(color: AppTheme.dividerColor, height: 20),
+                  ],
+                ),
+              );
+            },
+          ),
           InkWell(
             onTap: _addProfile,
             borderRadius: BorderRadius.circular(12),
