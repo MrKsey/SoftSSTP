@@ -81,13 +81,16 @@ jobs:
               | sort -V \
               | tail -n1 || true)
             if [[ -z "${LATEST}" ]]; then
-              LATEST=$(grep -E '^version:' SoftSSTP/pubspec.yaml | head -n1 \
+              # First release in this repository: take the version from
+              # pubspec.yaml verbatim (no increment).
+              VERSION=$(grep -E '^version:' SoftSSTP/pubspec.yaml | head -n1 \
                 | sed -E 's/version:[[:space:]]*//' | sed -E 's/\+.*//')
+            else
+              MAJOR=$(echo "${LATEST}" | cut -d. -f1)
+              MINOR=$(echo "${LATEST}" | cut -d. -f2)
+              PATCH=$(echo "${LATEST}" | cut -d. -f3)
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
             fi
-            MAJOR=$(echo "${LATEST}" | cut -d. -f1)
-            MINOR=$(echo "${LATEST}" | cut -d. -f2)
-            PATCH=$(echo "${LATEST}" | cut -d. -f3)
-            VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
             TAG="v${VERSION}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
