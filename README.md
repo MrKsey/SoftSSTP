@@ -123,7 +123,6 @@ takeover cannot loop forever.
 ## Build from source
 
 ```bash
-```bash
 # Requirements: Flutter (stable), JDK 17, Android SDK + NDK.
 # The SoftEther plugin cross-compiles OpenSSL during the Gradle build, so bash,
 # perl and make must also be available (they are on Linux/macOS/CI; on Windows
@@ -146,7 +145,6 @@ flutter build apk --release --split-per-abi \
 The `--recursive` flag checks out the pinned OpenSSL submodule that the
 `softether_flutter` plugin needs; if you cloned without it, run
 `git submodule update --init --recursive`.
-```
 
 APKs are written to `build/app/outputs/apk/release/`.
 

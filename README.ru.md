@@ -129,7 +129,6 @@ SoftSSTP занимает VPN-слот, поэтому обычно вытесн
 ## Сборка из исходников
 
 ```bash
-```bash
 # Требуется: Flutter (stable), JDK 17, Android SDK и NDK.
 # Плагин SoftEther во время сборки Gradle компилирует OpenSSL из исходников,
 # поэтому нужны ещё bash, perl и make (на Linux/macOS/CI они есть, на Windows
@@ -152,7 +151,6 @@ flutter build apk --release --split-per-abi \
 Флаг `--recursive` подтягивает закреплённый сабмодуль OpenSSL, который нужен
 плагину `softether_flutter`. Если клонировали без него, выполните
 `git submodule update --init --recursive`.
-```
 
 APK появятся в `build/app/outputs/apk/release/`.
 
