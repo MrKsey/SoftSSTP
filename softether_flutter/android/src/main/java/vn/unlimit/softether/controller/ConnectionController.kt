@@ -86,7 +86,11 @@ class ConnectionController(
     // logs (and the UI can show) how long the data path has been silent, which
     // distinguishes "no traffic" from a blocked native receive.
     private val lastReceiveActivityMs = AtomicLong(System.currentTimeMillis())
-    
+
+    // Last TCP connection count written to the app log, so the periodic check
+    // logs only when additional connections come up or drop.
+    private var lastLoggedConnectionCount = -1
+
     private var currentState: ConnectionState = ConnectionState.DISCONNECTED
         set(value) {
             field = value
@@ -320,6 +324,19 @@ class ConnectionController(
                 "user=${config.username} tcp=${config.useTcp} udp=${config.useUdp} " +
                 "clientMac=${config.clientMac.ifBlank { "<derived>" }}"
         )
+        // Requested SoftEther session options (Windows-client equivalents). The
+        // server decides the final values; the negotiated result is logged once
+        // the session is up (see logSessionInfo()).
+        SoftEtherLog.append(
+            "SESSION",
+            "Requested: tcpConnections=${config.maxConnections} " +
+                "establishInterval=${config.establishIntervalMs}ms " +
+                "duplex=${config.duplexMode} sslEncrypt=${config.useEncrypt} " +
+                "compress=${config.useCompress} udpAcceleration=${!config.useUdp} " +
+                "qos=${config.qos} udpPort=${config.udpPort}"
+        )
+        // Fresh session: forget the previous count so the first check always logs.
+        lastLoggedConnectionCount = -1
         currentState = ConnectionState.CONNECTING
         isCancelled.set(false)
 
@@ -341,6 +358,10 @@ class ConnectionController(
             if (nativeHandle == 0L) {
                 throw Exception("Failed to create native connection")
             }
+            // Publish the handle so the client's pre-connect setters (timeout,
+            // duplex, session options) and getAllSocketFds() target this
+            // connection instead of handle 0.
+            client.externalHandle = nativeHandle
 
             performConnectInner()
         } catch (e: Throwable) {
@@ -575,6 +596,8 @@ class ConnectionController(
         currentState = ConnectionState.CONNECTED
         resetTrafficPublishing(publishSnapshot = true)
         SoftEtherLog.append("PHASE", "Connected — data path started (assigned IP $assignedLocalIp)")
+        // Log the negotiated session state (connection count, TLS, server flags).
+        logSessionInfo(force = true)
 
         // Start data forwarding loops
         startDataForwarding()
@@ -969,6 +992,9 @@ connectInFlight.set(true)
             if (nativeHandle == 0L) {
                 throw Exception("Failed to create native connection for reconnect")
             }
+            // Publish the handle so the setters below (timeout, duplex, session
+            // options) target this connection instead of handle 0.
+            client.externalHandle = nativeHandle
 
             client.setTimeout(config.connectTimeoutMs)
 
@@ -1175,6 +1201,30 @@ connectInFlight.set(true)
     }
 
     /**
+     * Writes the negotiated session state to the app log: how many TCP
+     * connections are actually up, what the server allowed, and whether the data
+     * channel runs over TLS. Called once after the tunnel is up, then again
+     * whenever the connection count changes, so the profile's SoftEther options
+     * are verifiable on-device.
+     */
+    private fun logSessionInfo(force: Boolean = false) {
+        if (nativeHandle == 0L) return
+        val info = client.getSessionInfo() ?: return
+        if (!force && info.numConnections == lastLoggedConnectionCount) return
+        lastLoggedConnectionCount = info.numConnections
+        SoftEtherLog.append(
+            "SESSION",
+            "Active: tcpConnections=${info.numConnections} " +
+                "(requested=${info.requestedMaxConnections} " +
+                "serverMax=${info.serverMaxConnections}) " +
+                "dataChannel=${if (info.useSslData) "TLS" else "raw-TCP"} " +
+                "sslSessionEncrypt=${info.serverUseEncrypt} " +
+                "compress=${info.serverUseCompress} " +
+                "natT=${info.usingNatT}"
+        )
+    }
+
+    /**
      * Start periodic statistics logging
      */
     private fun startStatisticsLogging() {
@@ -1187,6 +1237,8 @@ connectInFlight.set(true)
                     delay(STATS_INTERVAL_MS)
                     if (isConnected()) {
                         publishTrafficSnapshot()
+                        // Surface additional connections coming up or dropping.
+                        logSessionInfo()
                         Log.d(TAG, "Stats: sent=${bytesSent.get()} bytes (${packetsSent.get()} pkts), " +
                                 "received=${bytesReceived.get()} bytes (${packetsReceived.get()} pkts)")
                     }

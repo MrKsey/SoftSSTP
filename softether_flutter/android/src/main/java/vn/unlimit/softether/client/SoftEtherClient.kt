@@ -22,13 +22,23 @@ class SoftEtherClient {
     }
 
     /**
+     * Handle of the connection currently managed by the app. ConnectionController
+     * owns the native handle and publishes it through [externalHandle]; the
+     * internal [nativeHandle] is only a fallback. Without this resolution the
+     * pre-connect setters (timeout, duplex, session options) and
+     * [getAllSocketFds] silently targeted handle 0 and did nothing.
+     */
+    private fun activeHandle(): Long = externalHandle.takeIf { it != 0L } ?: nativeHandle
+
+    /**
      * Set half/full-duplex mode (Phase 17).
      * @param halfConnection true = half-duplex (directional C2S/S2C split),
      *   false = full-duplex (all connections BOTH). Must be called before connect.
      */
     fun setHalfConnection(halfConnection: Boolean) {
-        if (nativeHandle == 0L) return
-        nativeSetHalfConnection(nativeHandle, halfConnection)
+        val handle = activeHandle()
+        if (handle == 0L) return
+        nativeSetHalfConnection(handle, halfConnection)
     }
 
     /**
@@ -47,9 +57,10 @@ class SoftEtherClient {
         useCompress: Boolean,
         qos: Boolean
     ) {
-        if (nativeHandle == 0L) return
+        val handle = activeHandle()
+        if (handle == 0L) return
         nativeSetSessionOptions(
-            nativeHandle, maxConnections, establishIntervalMs, useEncrypt, useCompress, qos
+            handle, maxConnections, establishIntervalMs, useEncrypt, useCompress, qos
         )
     }
 
@@ -58,8 +69,9 @@ class SoftEtherClient {
      * @return Array of socket FDs, or null if none
      */
     fun getAllSocketFds(): IntArray? {
-        if (nativeHandle == 0L) return null
-        return nativeGetAllSocketFds(nativeHandle)
+        val handle = activeHandle()
+        if (handle == 0L) return null
+        return nativeGetAllSocketFds(handle)
     }
 
     /**
@@ -151,6 +163,29 @@ class SoftEtherClient {
     }
 
     /**
+     * Diagnostic snapshot of the negotiated session (Phase 18). Lets the app log
+     * how many TCP connections are actually up and whether the data channel runs
+     * over TLS, so the profile's SoftEther options can be verified on-device.
+     *
+     * @return Snapshot, or null when the handle is invalid.
+     */
+    fun getSessionInfo(): SoftEtherSessionInfo? {
+        val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
+        if (handle == 0L) return null
+        val arr = nativeGetSessionInfo(handle) ?: return null
+        if (arr.size < 7) return null
+        return SoftEtherSessionInfo(
+            numConnections = arr[0].toInt(),
+            requestedMaxConnections = arr[1].toInt(),
+            serverMaxConnections = arr[2].toInt(),
+            useSslData = arr[3] != 0L,
+            serverUseEncrypt = arr[4] != 0L,
+            serverUseCompress = arr[5] != 0L,
+            usingNatT = arr[6] != 0L
+        )
+    }
+
+    /**
      * Check if currently connected
      */
     fun isConnected(): Boolean = isConnected.get()
@@ -161,8 +196,9 @@ class SoftEtherClient {
      * @param timeoutMs Timeout in milliseconds
      */
     fun setTimeout(timeoutMs: Int) {
-        if (nativeHandle != 0L) {
-            nativeSetOption(nativeHandle, OPTION_TIMEOUT, timeoutMs.toLong())
+        val handle = activeHandle()
+        if (handle != 0L) {
+            nativeSetOption(handle, OPTION_TIMEOUT, timeoutMs.toLong())
         }
     }
 
@@ -217,6 +253,7 @@ class SoftEtherClient {
         useEncrypt: Boolean, useCompress: Boolean, qos: Boolean
     )
     external fun nativeGetNumConnections(handle: Long): Int
+    external fun nativeGetSessionInfo(handle: Long): LongArray?
     external fun nativeGetAllSocketFds(handle: Long): IntArray?
     external fun nativeForceCloseSocket(handle: Long)
     external fun nativeGetClientMac(handle: Long): ByteArray?
@@ -292,6 +329,27 @@ data class DhcpResult(
     val dnsServer2: String,
     val leaseTime: Int,
     val prefixLength: Int
+)
+
+/**
+ * Negotiated SoftEther session state (Phase 18 diagnostics).
+ *
+ * @param numConnections active TCP connections (primary + additional)
+ * @param requestedMaxConnections what the profile asked for (post-clamp)
+ * @param serverMaxConnections what the server's Welcome PACK allows
+ * @param useSslData true = data channel runs over TLS
+ * @param serverUseEncrypt server-accepted session encryption flag
+ * @param serverUseCompress server-accepted session compression flag
+ * @param usingNatT true = primary connection runs over the NAT-T transport
+ */
+data class SoftEtherSessionInfo(
+    val numConnections: Int,
+    val requestedMaxConnections: Int,
+    val serverMaxConnections: Int,
+    val useSslData: Boolean,
+    val serverUseEncrypt: Boolean,
+    val serverUseCompress: Boolean,
+    val usingNatT: Boolean
 )
 
 /**

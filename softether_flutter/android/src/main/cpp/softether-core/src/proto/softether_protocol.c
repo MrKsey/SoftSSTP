@@ -4005,6 +4005,21 @@ void softether_set_session_options(softether_connection_t* conn,
          conn->req_use_encrypt, conn->req_use_compress, conn->req_qos);
 }
 
+void softether_get_session_info(softether_connection_t* conn,
+                                softether_session_info_t* out) {
+    if (out == NULL) return;
+    memset(out, 0, sizeof(*out));
+    if (conn == NULL) return;
+
+    out->num_connections = softether_get_num_connections(conn);
+    out->requested_max_connection = conn->max_connection;
+    out->server_max_connection = (int)conn->server_max_connection;
+    out->use_ssl_data = conn->use_ssl_data;
+    out->server_use_encrypt = (int)conn->server_use_encrypt;
+    out->server_use_compress = (int)conn->server_use_compress;
+    out->using_nat_t = conn->using_nat_t;
+}
+
 // Reconnection support - Attempt to reconnect using stored credentials
 int softether_reconnect(softether_connection_t* conn) {
     if (conn == NULL) {

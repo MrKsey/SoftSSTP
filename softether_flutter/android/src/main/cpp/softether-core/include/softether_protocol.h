@@ -384,6 +384,22 @@ void softether_set_session_options(softether_connection_t* conn,
                                    int use_compress,
                                    int qos);
 
+// Snapshot of the session state for diagnostics: how many TCP connections are
+// actually up, what the server allowed, and whether the data channel is TLS.
+// Fills `out` with zeroes when `conn` is NULL.
+typedef struct {
+    int num_connections;             // primary + established additional sockets
+    int requested_max_connection;    // what the profile asked for (post-clamp)
+    int server_max_connection;       // what the server's Welcome PACK allows
+    int use_ssl_data;                // 1 = data channel runs over TLS
+    int server_use_encrypt;          // server-accepted session encryption flag
+    int server_use_compress;         // server-accepted session compression flag
+    int using_nat_t;                 // 1 = primary runs over the NAT-T transport
+} softether_session_info_t;
+
+void softether_get_session_info(softether_connection_t* conn,
+                                softether_session_info_t* out);
+
 // DHCP result
 typedef struct {
     uint32_t assigned_ip;

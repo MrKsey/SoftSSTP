@@ -58,6 +58,11 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
 JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNumConnections(
     JNIEnv *env, jobject thiz, jlong handle);
 
+// Diagnostic snapshot of the negotiated session (connection count, server
+// limits, data-channel TLS, accepted encryption/compression flags).
+JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetSessionInfo(
+    JNIEnv *env, jobject thiz, jlong handle);
+
 JNIEXPORT jintArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetAllSocketFds(
     JNIEnv *env, jobject thiz, jlong handle);
 

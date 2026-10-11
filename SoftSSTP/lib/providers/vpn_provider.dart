@@ -50,6 +50,13 @@ class VpnProvider extends ChangeNotifier {
   // Protocol mirrored from the active profile. [VpnProtocol.sstp] routes to the
   // sstp_flutter plugin, [VpnProtocol.softether] to softether_flutter.
   String _protocol = VpnProtocol.sstp;
+  // Protocol of the plugin that owns the tunnel currently in use. Kept separate
+  // from [_protocol]: when the active profile's protocol is switched while a
+  // tunnel is up, [_protocol] already points at the new plugin, but the running
+  // tunnel still belongs to the old one. Routing teardown/status/traffic calls
+  // through the owner protocol is what stops the old tunnel from being orphaned
+  // (and a second one from being created next to it).
+  String? _tunnelProtocol;
   String _hubName = 'DEFAULT';
   String _clientMac = '';
 
@@ -737,7 +744,18 @@ class VpnProvider extends ChangeNotifier {
         a.customSni != b.customSni ||
         a.reconnectionEnabled != b.reconnectionEnabled ||
         a.reconnectionCount != b.reconnectionCount ||
-        a.reconnectionInterval != b.reconnectionInterval;
+        a.reconnectionInterval != b.reconnectionInterval ||
+        // SoftEther session options only take effect on a fresh login, so a
+        // change while the tunnel is up has to rebuild it (otherwise editing
+        // "Number of TCP connections" and saving would change nothing).
+        a.seTcpConnections != b.seTcpConnections ||
+        a.seEstablishIntervalMs != b.seEstablishIntervalMs ||
+        a.seDuplexMode != b.seDuplexMode ||
+        a.seEncrypt != b.seEncrypt ||
+        a.seCompress != b.seCompress ||
+        a.seDisableUdpAcceleration != b.seDisableUdpAcceleration ||
+        a.seUdpPort != b.seUdpPort ||
+        a.seDisableQos != b.seDisableQos;
   }
 
   Future<void> updateProfileMeta(
@@ -1223,6 +1241,11 @@ class VpnProvider extends ChangeNotifier {
   /// True when the tunnel that is (or is about to be) active uses SoftEther.
   bool get _isSoftetherActive => _protocol == VpnProtocol.softether;
 
+  /// True when the tunnel currently in use belongs to the SoftEther plugin.
+  /// Falls back to the active profile's protocol before the first connection.
+  bool get _isSoftetherTunnel =>
+      (_tunnelProtocol ?? _protocol) == VpnProtocol.softether;
+
   /// True when the system has exempted SoftSSTP from battery optimization.
   Future<bool> isIgnoringBatteryOptimizations() =>
       _sstpFlutter.isIgnoringBatteryOptimizations();
@@ -1383,6 +1406,9 @@ class VpnProvider extends ChangeNotifier {
       await saveTrafficTotals();
       notifyListeners();
 
+      // From here on the tunnel belongs to the active profile's protocol.
+      _tunnelProtocol = _protocol;
+
       if (_isSoftetherActive) {
         await _startSoftetherConnection();
         return;
@@ -1489,7 +1515,7 @@ class VpnProvider extends ChangeNotifier {
     _negotiating = false;
     _autoRetryScheduled = false;
     try {
-      if (_isSoftetherActive) {
+      if (_isSoftetherTunnel) {
         await _softether.disconnect();
       } else {
         await _sstpFlutter.disconnect();
@@ -1533,7 +1559,7 @@ class VpnProvider extends ChangeNotifier {
 
   Future<String?> checkLastConnectionStatus() async {
     try {
-      final status = await (_isSoftetherActive
+      final status = await (_isSoftetherTunnel
           ? _softether.checkLastConnectionStatus()
           : _sstpFlutter.checkLastConnectionStatus());
       return status.toString();
@@ -1568,7 +1594,7 @@ class VpnProvider extends ChangeNotifier {
     if (_status == VpnStatus.connected) {
       if (_internalIp.isEmpty) {
         try {
-          final ip = await (_isSoftetherActive
+          final ip = await (_isSoftetherTunnel
               ? _softether.getAssignedIp()
               : _sstpFlutter.getAssignedIp());
           if (ip.isNotEmpty) {
@@ -1581,7 +1607,7 @@ class VpnProvider extends ChangeNotifier {
       // Recover the authoritative traffic totals, in case the per-second
       // updates were missed while the app was in the background.
       try {
-        final totals = await (_isSoftetherActive
+        final totals = await (_isSoftetherTunnel
             ? _softether.getTrafficTotals()
             : _sstpFlutter.getTrafficTotals());
         if (totals[0] > _totalDownload) _totalDownload = totals[0];
@@ -1814,7 +1840,7 @@ class VpnProvider extends ChangeNotifier {
 
   Future<String> getConnectionLog() async {
     try {
-      if (_isSoftetherActive) {
+      if (_isSoftetherTunnel) {
         return await _softether.getConnectionLog();
       }
       return await _sstpFlutter.getConnectionLog();
@@ -1825,7 +1851,7 @@ class VpnProvider extends ChangeNotifier {
 
   Future<String> getConnectionLogPath() async {
     try {
-      if (_isSoftetherActive) {
+      if (_isSoftetherTunnel) {
         return await _softether.getConnectionLogPath();
       }
       return await _sstpFlutter.getConnectionLogPath();
@@ -1836,7 +1862,7 @@ class VpnProvider extends ChangeNotifier {
 
   Future<void> clearConnectionLog() async {
     try {
-      if (_isSoftetherActive) {
+      if (_isSoftetherTunnel) {
         await _softether.clearConnectionLog();
       } else {
         await _sstpFlutter.clearConnectionLog();

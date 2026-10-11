@@ -894,7 +894,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 'Number of TCP connections',
                 'How many parallel TCP connections the client may open (1-8). '
                     'More connections can raise throughput on fast links but '
-                    'cost battery. Default 4.',
+                    'cost battery. The server may allow fewer; the connection '
+                    'log shows how many are actually up. Default 4.',
               ),
             ],
           ),
@@ -983,9 +984,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             subtitle: 'Ask the server to encrypt the session data',
             value: _seEncrypt,
             help:
-                'The transport is always TLS; this adds SoftEther session '
-                'encryption on top. Leave it on unless a server requires '
-                'otherwise.',
+                'The data channel always runs over TLS. This option only sets '
+                'the session-encryption request in the login handshake; the '
+                'server decides the final value, which the connection log shows.',
             onChanged: (value) {
               setState(() {
                 _seEncrypt = value;
@@ -1719,7 +1720,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         'Number of TCP connections',
         'How many parallel TCP connections the client may open (1-8). More '
             'connections can raise throughput on fast links but cost battery. '
-            'Default 4.',
+            'The server may allow fewer; the connection log shows how many are '
+            'actually up. Default 4.',
       ),
       (
         'Establishing interval',
@@ -1735,9 +1737,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ('MTU', 'Tunnel MTU. Lower it if large packets are dropped (e.g. 1400).'),
       (
         'Encrypt VPN Session with SSL',
-        'Ask the server to encrypt the session data. The transport is always '
-            'TLS; this adds SoftEther session encryption on top. Leave it on '
-            'unless a server requires otherwise.',
+        'The data channel always runs over TLS. This option only sets the '
+            'session-encryption request in the login handshake; the server '
+            'decides the final value, which the connection log shows.',
       ),
       (
         'Use Data Compression',
