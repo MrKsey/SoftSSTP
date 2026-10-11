@@ -30,16 +30,9 @@ on:
 permissions:
   contents: write
 
-# A release arrives as two pushes to the same commit: the version-bump commit on
-# `main`, then the `v*` tag. Both match a trigger, so two runs would build the
-# very same SHA in parallel. Collapse them by SHA: the later run wins, and for a
-# release that is the tag run (the one that also publishes the GitHub Release).
-# Plain commits pushed to `main` keep their own SHA, so they still build once and
-# show breakage early.
-concurrency:
-  group: build-${{ github.sha }}
-  cancel-in-progress: true
-
+# No concurrency group: a release is two pushes to the same commit (the version
+# bump on `main`, then the `v*` tag), and both get their own run so the `main`
+# build is not cancelled by the tag run. The tag run also publishes the release.
 jobs:
   build:
     name: Build release APKs
