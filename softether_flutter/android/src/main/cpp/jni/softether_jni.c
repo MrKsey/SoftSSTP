@@ -38,12 +38,18 @@ static int jni_protect_fd(void* userdata, int fd) {
 
     JNIEnv* env = NULL;
     int attached = 0;
-    if ((*g_jvm)->GetEnv(g_jvm, (void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
+    jint env_status = (*g_jvm)->GetEnv(g_jvm, (void**)&env, JNI_VERSION_1_6);
+    if (env_status == JNI_EDETACHED) {
         if ((*g_jvm)->AttachCurrentThread(g_jvm, (void**)&env, NULL) != JNI_OK) {
             LOGW("protect: AttachCurrentThread failed");
             return -1;
         }
         attached = 1;
+    } else if (env_status != JNI_OK || env == NULL) {
+        // Only JNI_EDETACHED was handled before: any other failure left env
+        // NULL and the CallBooleanMethod below dereferenced it (native crash).
+        LOGW("protect: GetEnv failed (status=%d)", (int)env_status);
+        return -1;
     }
 
     jboolean ok = (*env)->CallBooleanMethod(env, g_protector, g_protect_method, (jint)fd);
@@ -81,13 +87,28 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
 
     if (protector != NULL) {
         g_protector = (*env)->NewGlobalRef(env, protector);
-        jclass cls = (*env)->GetObjectClass(env, protector);
-        g_protect_method = (*env)->GetMethodID(env, cls, "protect", "(I)Z");
-        (*env)->DeleteLocalRef(env, cls);
+        jclass cls = (g_protector != NULL) ? (*env)->GetObjectClass(env, protector) : NULL;
+        if (cls != NULL) {
+            g_protect_method = (*env)->GetMethodID(env, cls, "protect", "(I)Z");
+            (*env)->DeleteLocalRef(env, cls);
+        } else {
+            g_protect_method = NULL;
+        }
         if (g_protect_method == NULL) {
-            LOGE("setProtectCallback: SocketProtector.protect(I)Z not found");
-            (*env)->DeleteGlobalRef(env, g_protector);
-            g_protector = NULL;
+            // GetObjectClass / GetMethodID left a pending exception (OOM or
+            // NoSuchMethodError). Leaving it pending makes the JVM throw it into
+            // Kotlin on the next frame as an Error — which the connect flow's
+            // catch (Exception) does not handle — and the process dies. Clear it
+            // and fall back to "no socket protection" instead.
+            if ((*env)->ExceptionCheck(env)) {
+                (*env)->ExceptionDescribe(env);
+                (*env)->ExceptionClear(env);
+            }
+            LOGE("setProtectCallback: SocketProtector.protect(I)Z unavailable");
+            if (g_protector != NULL) {
+                (*env)->DeleteGlobalRef(env, g_protector);
+                g_protector = NULL;
+            }
         }
     }
 

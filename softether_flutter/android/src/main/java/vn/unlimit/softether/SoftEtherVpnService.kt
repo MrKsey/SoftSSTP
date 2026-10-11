@@ -368,8 +368,14 @@ class SoftEtherVpnService : VpnService() {
                 // service itself also stops, or the process lingers with the
                 // VPN route alive.
                 stopSelf()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: the connect flow rethrows whatever it
+                // caught (ConnectionController.connect catches Throwable), and an
+                // Error escaping this coroutine (SupervisorJob, no
+                // CoroutineExceptionHandler) is an uncaught exception that kills
+                // the process. Report it as a failed connect instead.
                 Log.e(TAG, "Failed to start VPN", e)
+                SoftEtherLog.append("ERROR", "Connect failed: ${e.javaClass.simpleName}: ${e.message}")
                 // updateNotification("Connection failed: ${e.message}")
                 mIsUserDisconnect = false
                 stopVpn(disconnectByError = true)

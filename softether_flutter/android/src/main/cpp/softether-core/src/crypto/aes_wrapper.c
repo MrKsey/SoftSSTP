@@ -20,6 +20,7 @@
 
 #define TAG "SoftEtherCrypto"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 // Upper bounds for the TLS handshake. The handshake runs while holding
@@ -645,10 +646,25 @@ int ssl_read(ssl_context_t* ctx, uint8_t* buffer, size_t len) {
             LOGD("SSL read retry %d/%d (ssl_error=%d)", retries, max_retries, ssl_error);
             continue;
         }
-        if (ssl_error == SSL_ERROR_SYSCALL && (errno == EINTR || errno == EAGAIN)) {
+        if (ssl_error == SSL_ERROR_SYSCALL && errno == EINTR) {
             retries++;
             LOGD("SSL read retry %d/%d (syscall errno=%d)", retries, max_retries, errno);
             continue;
+        }
+        if (ssl_error == SSL_ERROR_SYSCALL && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // SO_RCVTIMEO expired: the peer sent nothing for the whole socket
+            // timeout. Report the timeout to the caller instead of retrying.
+            // Retrying here kept this read (and the SSL object, pinned by the
+            // g_tls_use_lock READ lock taken above) busy for
+            // max_retries * SO_RCVTIMEO — ~30 s with a 5 s data timeout. That
+            // blocked every ssl_write and ssl_destroy in the process for the
+            // same 30 s, so a single stalled link froze the whole tunnel and
+            // tripped the Kotlin keepalive watchdog ("No receive for 32 s —
+            // reconnecting"). The raw read path already returns on EAGAIN;
+            // this makes the TLS path behave the same, bounding the stall to
+            // one SO_RCVTIMEO.
+            LOGW("SSL read timed out (errno=%d)", errno);
+            break;
         }
         unsigned long err_detail = ERR_get_error();
         LOGE("SSL read error: %d, detail: %lu (%s)", ssl_error, err_detail,

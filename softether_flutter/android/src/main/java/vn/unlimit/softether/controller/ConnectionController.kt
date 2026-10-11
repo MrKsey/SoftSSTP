@@ -903,7 +903,11 @@ class ConnectionController(
                     }
                 } catch (e: CancellationException) {
                     break
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: a JNI-layer Error (e.g. a pending
+                    // exception surfacing from a native upcall) would otherwise
+                    // escape this coroutine and kill the process instead of
+                    // triggering a reconnect.
                     Log.e(TAG, "Receive loop error", e)
                     SoftEtherLog.append("ERROR", "Receive loop exception: ${e.message}")
                     if (isConnected() && !isCancelled.get()) {
@@ -1126,7 +1130,7 @@ connectInFlight.set(true)
             reconnectAttempts.set(0)
             Log.d(TAG, "Reconnection successful — data forwarding restarted")
 
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "Reconnection attempt failed", e)
             // Clean up partial native state left by failed reconnect
             if (nativeHandle != 0L) {

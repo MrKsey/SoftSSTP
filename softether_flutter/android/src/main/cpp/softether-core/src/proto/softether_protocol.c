@@ -1686,6 +1686,10 @@ typedef struct {
     uint32_t timeout_ms;            // per-transport connect timeout
     int udp_port;                   // seUdpPort (for TRANSPORT_RUDP_DIRECT)
     const volatile int* cancel_flag; // shared cancel flag
+    // Owning connection, used only to read the socket-protect hook. On a
+    // reconnect the previous tunnel is still up, so an unprotected connect()
+    // here is routed into it and hangs for the whole connect timeout.
+    softether_connection_t* conn;
 
     // Output (written by thread, read by main after join)
     transport_result_t result;
@@ -1744,6 +1748,15 @@ static void* transport_thread_tcp(void* arg) {
         LOGD("[%s] failed to create socket", transport_name(TRANSPORT_TCP));
         r->error = ERR_TCP_CONNECT;
         return NULL;
+    }
+
+    // Exclude the socket from the VPN tunnel before connect(): on a reconnect
+    // the previous tunnel may still be up, and an unprotected connect() would
+    // be routed into it and hang until the connect timeout. The hook attaches
+    // this pthread to the JVM itself (see jni_protect_fd).
+    if (ctx->conn != NULL) {
+        sock->protect_fn = ctx->conn->protect_fn;
+        sock->protect_userdata = ctx->conn->protect_userdata;
     }
 
     // Connect (with timeout)
@@ -2264,6 +2277,7 @@ static int softether_connect_parallel_race(softether_connection_t* conn,
             default:                   func = NULL; break;
         }
         if (func) {
+            threads[i].conn = conn;
             pthread_create(&thread_ids[i], NULL, func, &threads[i]);
         }
     }
