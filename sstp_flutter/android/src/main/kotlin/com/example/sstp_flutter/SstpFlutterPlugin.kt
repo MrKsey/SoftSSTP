@@ -101,6 +101,10 @@ class SstpFlutterPlugin: FlutterPlugin, MethodCallHandler , ActivityAware, Flutt
     context = flutterPluginBinding.applicationContext
     prefs = PreferenceManager.getDefaultSharedPreferences(flutterPluginBinding.applicationContext)
     flutterChannel = MethodChannel(flutterPluginBinding.binaryMessenger, "responseReceiver")
+    // Initialize the shared log file eagerly so the log screen can read it even
+    // if the SSTP service has not run yet (the SoftEther plugin writes to the
+    // same file).
+    ConnectionLog.init(flutterPluginBinding.applicationContext)
   }
 
   override fun onAttachedToActivity(binding: ActivityPluginBinding) {

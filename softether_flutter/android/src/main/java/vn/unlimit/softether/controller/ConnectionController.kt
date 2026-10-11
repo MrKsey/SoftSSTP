@@ -331,16 +331,11 @@ class ConnectionController(
         // Requested SoftEther session options (Windows-client equivalents). The
         // server decides the final values; the negotiated result is logged once
         // the session is up (see logSessionInfo()).
-        val duplexLabel = when (config.fullDuplex) {
-            true -> "full"
-            false -> "half"
-            null -> "auto"
-        }
         SoftEtherLog.append(
             "SESSION",
             "Requested: tcpConnections=${config.maxConnections} " +
                 "establishInterval=${config.establishIntervalMs}ms " +
-                "duplex=$duplexLabel sslEncrypt=${config.useEncrypt} " +
+                "sslEncrypt=${config.useEncrypt} " +
                 "udpAcceleration=${!config.useUdp} " +
                 "qos=${config.qos} udpPort=${config.udpPort}"
         )
@@ -369,8 +364,8 @@ class ConnectionController(
                 throw Exception("Failed to create native connection")
             }
             // Publish the handle so the client's pre-connect setters (timeout,
-            // duplex, session options) and getAllSocketFds() target this
-            // connection instead of handle 0.
+            // session options) and getAllSocketFds() target this connection
+            // instead of handle 0.
             client.externalHandle = nativeHandle
 
             performConnectInner()
@@ -453,11 +448,11 @@ class ConnectionController(
             client.nativeSetAuthType(nativeHandle, authTypeInt)
         }
         startNativeStateMonitor()
-        // Phase 17: choose half/full-duplex by device tier (or manual override) and
-        // apply before connect. fullDuplex=false -> half-duplex (current 2TX/2RX split).
-        val fullDuplex = DuplexModeSelector.resolve(service, config)
-        client.setHalfConnection(!fullDuplex)
-        Log.d(TAG, "Duplex mode: ${if (fullDuplex) "FULL" else "HALF"} (4x BOTH / directional split)")
+        // Protect additional TCP sockets from the tunnel before they connect.
+        // They are opened while the VPN is already up, so without this the
+        // connect() is routed into the tunnel and hangs until the timeout
+        // (the "addlStage=tcp addlLastMs=30000" symptom).
+        client.setProtectCallback { fd -> service.protect(fd) }
         // SoftEther session options (Windows-client equivalents) from the profile.
         // Compression is always off: the app no longer exposes it (the server-side
         // zlib path never worked reliably and tunnel data is mostly incompressible).
@@ -1004,9 +999,10 @@ connectInFlight.set(true)
             if (nativeHandle == 0L) {
                 throw Exception("Failed to create native connection for reconnect")
             }
-            // Publish the handle so the setters below (timeout, duplex, session
+            // Publish the handle so the setters below (timeout, session
             // options) target this connection instead of handle 0.
             client.externalHandle = nativeHandle
+            client.setProtectCallback { fd -> service.protect(fd) }
 
             client.setTimeout(config.connectTimeoutMs)
 
@@ -1025,11 +1021,6 @@ connectInFlight.set(true)
                 client.nativeSetAuthType(nativeHandle, authTypeInt)
             }
 
-            // Phase 17: re-apply duplex mode to the fresh reconnect handle
-            // (nativeCreate resets half_connection to 0, i.e. full-duplex).
-            val reconnectFullDuplex = DuplexModeSelector.resolve(service, config)
-            client.setHalfConnection(!reconnectFullDuplex)
-            Log.d(TAG, "Reconnect duplex mode: ${if (reconnectFullDuplex) "FULL" else "HALF"}")
             // Re-apply SoftEther session options to the fresh reconnect handle.
             client.setSessionOptions(
                 config.maxConnections,

@@ -86,7 +86,6 @@ class VpnProvider extends ChangeNotifier {
   // SoftEther session options mirrored from the active profile (ignored for SSTP).
   int _seTcpConnections = 4;
   int _seEstablishIntervalMs = 1000;
-  String _seDuplexMode = 'auto';
   bool _seEncrypt = true;
   bool _seDisableUdpAcceleration = true;
   int _seUdpPort = 0;
@@ -260,7 +259,6 @@ class VpnProvider extends ChangeNotifier {
   // SoftEther session options (Windows-client equivalents).
   int get seTcpConnections => _seTcpConnections;
   int get seEstablishIntervalMs => _seEstablishIntervalMs;
-  String get seDuplexMode => _seDuplexMode;
   bool get seEncrypt => _seEncrypt;
   bool get seDisableUdpAcceleration => _seDisableUdpAcceleration;
   int get seUdpPort => _seUdpPort;
@@ -545,7 +543,6 @@ class VpnProvider extends ChangeNotifier {
     customSni: _customSni,
     seTcpConnections: _seTcpConnections,
     seEstablishIntervalMs: _seEstablishIntervalMs,
-    seDuplexMode: _seDuplexMode,
     seEncrypt: _seEncrypt,
     seDisableUdpAcceleration: _seDisableUdpAcceleration,
     seUdpPort: _seUdpPort,
@@ -593,7 +590,6 @@ class VpnProvider extends ChangeNotifier {
     _customSni = profile.customSni;
     _seTcpConnections = profile.seTcpConnections;
     _seEstablishIntervalMs = profile.seEstablishIntervalMs;
-    _seDuplexMode = profile.seDuplexMode;
     _seEncrypt = profile.seEncrypt;
     _seDisableUdpAcceleration = profile.seDisableUdpAcceleration;
     _seUdpPort = profile.seUdpPort;
@@ -746,7 +742,6 @@ class VpnProvider extends ChangeNotifier {
         // "Number of TCP connections" and saving would change nothing).
         a.seTcpConnections != b.seTcpConnections ||
         a.seEstablishIntervalMs != b.seEstablishIntervalMs ||
-        a.seDuplexMode != b.seDuplexMode ||
         a.seEncrypt != b.seEncrypt ||
         a.seDisableUdpAcceleration != b.seDisableUdpAcceleration ||
         a.seUdpPort != b.seUdpPort ||
@@ -1199,13 +1194,46 @@ class VpnProvider extends ChangeNotifier {
 
   /// Tears the current tunnel down and brings it back up, preserving the
   /// configured settings. Used when a change only takes effect on a fresh
-  /// connection (e.g. the app allowlist).
+  /// connection (e.g. the app allowlist or a protocol switch).
   Future<void> _reconnect() async {
+    // The tunnel that is up right now belongs to the recorded tunnel protocol
+    // (falls back to the active profile's protocol before the first connect).
+    final previous = _tunnelProtocol ?? _protocol;
     await disconnect();
-    // Give the system a moment to release the previous VPN interface before
-    // establishing a new one.
-    await Future.delayed(const Duration(milliseconds: 1200));
+    // Wait until the previous tunnel has actually released the VPN slot before
+    // starting the new one. Its native teardown can outlast a fixed delay (up
+    // to the connect timeout when a connect was still in flight), and starting
+    // the new tunnel too early left two VPNs up at once — most visible when
+    // switching a profile from SoftEther to SSTP.
+    await _waitUntilTunnelDown(previous);
     await connect();
+  }
+
+  /// Polls the plugin that owned [protocol] until it reports no active tunnel,
+  /// or a short deadline elapses. Lets [disconnect] return immediately while
+  /// still guaranteeing the old service is down before the new one starts.
+  Future<void> _waitUntilTunnelDown(
+    String protocol, {
+    int attempts = 40,
+  }) async {
+    for (var i = 0; i < attempts; i++) {
+      await Future.delayed(const Duration(milliseconds: 250));
+      try {
+        final status = protocol == VpnProtocol.softether
+            ? await _softether.checkLastConnectionStatus()
+            : await _sstpFlutter.checkLastConnectionStatus();
+        if (!_statusIsActive(status)) return;
+      } catch (_) {
+        return;
+      }
+    }
+  }
+
+  /// True while a plugin state string means a tunnel is up or coming up.
+  /// "Disconnected"/"Disconnecting" are idle; "Connected"/"Connecting" are not.
+  static bool _statusIsActive(String status) {
+    final s = status.toLowerCase();
+    return s.contains('connect') && !s.contains('disconnect');
   }
 
   String _getSSLVersion() {
@@ -1493,7 +1521,6 @@ class VpnProvider extends ChangeNotifier {
       allowedApps: allowedApps,
       maxConnections: _seTcpConnections,
       establishIntervalMs: _seEstablishIntervalMs,
-      duplexMode: _seDuplexMode,
       useEncrypt: _seEncrypt,
       // "Use Data Compression" was removed from the profile: the option never
       // worked reliably and SoftEther data is mostly incompressible, so the
@@ -1524,6 +1551,8 @@ class VpnProvider extends ChangeNotifier {
           await _sstpFlutter.disableProxy();
         }
       }
+      // Clear the tunnel owner: nothing is up, so the next connect records it.
+      _tunnelProtocol = null;
       _status = VpnStatus.disconnected;
       _statusMessage = '';
       _totalDownload = 0;
@@ -1836,26 +1865,38 @@ class VpnProvider extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Both plugins keep their own log file. Reading them separately lets the log
-  /// screen show what each protocol recorded instead of switching to whichever
-  /// protocol the selected profile happens to use.
-  Future<List<({String protocol, String path, String log})>>
-  getConnectionLogsByProtocol() async {
-    final out = <({String protocol, String path, String log})>[];
-    try {
-      final path = await _sstpFlutter.getConnectionLogPath();
-      final log = await _sstpFlutter.getConnectionLog();
-      out.add((protocol: 'SSTP', path: path, log: log));
-    } catch (_) {}
-    try {
-      final path = await _softether.getConnectionLogPath();
-      final log = await _softether.getConnectionLog();
-      out.add((protocol: 'SoftEther', path: path, log: log));
-    } catch (_) {}
-    return out;
+  /// Reads the single shared log file. Both plugins append to the same file, so
+  /// the screen shows one chronological stream across protocol switches. Each
+  /// plugin is queried in turn because only the one whose engine or service has
+  /// run knows the file path; the content is identical either way.
+  Future<String> getConnectionLog() async {
+    for (final read in <Future<String> Function()>[
+      _sstpFlutter.getConnectionLog,
+      _softether.getConnectionLog,
+    ]) {
+      try {
+        final log = await read();
+        if (log.trim().isNotEmpty) return log;
+      } catch (_) {}
+    }
+    return '';
   }
 
-  /// Clears both plugin logs: the log screen no longer selects one of them.
+  /// Path of the shared log file, for display in the log screen.
+  Future<String> getConnectionLogPath() async {
+    for (final read in <Future<String> Function()>[
+      _sstpFlutter.getConnectionLogPath,
+      _softether.getConnectionLogPath,
+    ]) {
+      try {
+        final path = await read();
+        if (path.isNotEmpty) return path;
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  /// Clears the shared log file (both plugins point at the same file).
   Future<void> clearConnectionLog() async {
     try {
       await _sstpFlutter.clearConnectionLog();

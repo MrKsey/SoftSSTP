@@ -170,12 +170,6 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
         val routes = if (addDefaultRoute) listOf(Route("0.0.0.0", 0)) else emptyList()
         // SoftEther session options (Windows-client equivalents).
         val disableUdp = call.argument<Boolean>("disableUdpAcceleration") ?: true
-        val duplexMode = call.argument<String>("duplexMode") ?: "auto"
-        val fullDuplex = when (duplexMode) {
-            "half" -> false
-            "full" -> true
-            else -> null
-        }
         return ConnectionConfig(
             serverHost = call.argument<String>("host") ?: "",
             serverPort = call.argument<Int>("port") ?: 443,
@@ -200,7 +194,6 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             useEncrypt = call.argument<Boolean>("useEncrypt") ?: true,
             useCompress = call.argument<Boolean>("useCompress") ?: false,
             qos = call.argument<Boolean>("qos") ?: true,
-            fullDuplex = fullDuplex,
         )
     }
 

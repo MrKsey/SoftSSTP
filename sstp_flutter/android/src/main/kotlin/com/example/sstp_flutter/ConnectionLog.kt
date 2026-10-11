@@ -11,16 +11,19 @@ import java.util.Locale
  * Collects a readable log of the whole connection lifecycle so that the
  * application (SoftSSTP) can show it to the user for diagnostics.
  *
- * When [enabled] is set, every line is kept in a bounded in-memory ring buffer
- * and appended to a text file inside the app-specific external storage, which
- * makes it reachable without any runtime permission. When [enabled] is false,
- * nothing is collected:
+ * When [enabled] is set, every line is appended to a text file inside the
+ * app-specific external storage, which makes it reachable without any runtime
+ * permission. When [enabled] is false, nothing is collected:
  *
  *     Android/data/io.github.mrksey.softsstp/files/connection_log.txt
+ *
+ * The SoftEther plugin writes to the SAME file (see its SoftEtherLog), so the
+ * app shows a single chronological log even across protocol switches; each
+ * session is delimited by a "=== NEW <PROTOCOL> SESSION ===" header.
  */
 internal object ConnectionLog {
+    // Shared with the SoftEther plugin — keep the two constants in sync.
     private const val FILE_NAME = "connection_log.txt"
-    private const val MAX_LINES = 1000
     private const val MAX_FILE_BYTES = 512 * 1024
 
     /**
@@ -29,8 +32,6 @@ internal object ConnectionLog {
      * phone, without wrapping onto a second line.
      */
     private const val SESSION_SEPARATOR_LENGTH = 40
-
-    private val buffer = ArrayDeque<String>()
 
     @Volatile
     var enabled: Boolean = false
@@ -49,9 +50,7 @@ internal object ConnectionLog {
     @Synchronized
     fun append(tag: String, message: String) {
         // When logging is turned off nothing is collected at all, neither in
-        // the in-memory buffer (which backs the "View connection log" screen)
-        // nor in the file. Previously the buffer was always filled, so the UI
-        // kept showing fresh entries even with the toggle disabled.
+        // the file nor in the "View connection log" screen (which reads it).
         if (!enabled) return
 
         writeLine("${timestamp()} [$tag] $message")
@@ -72,7 +71,7 @@ internal object ConnectionLog {
         val separator = "=".repeat(SESSION_SEPARATOR_LENGTH)
         writeLine("")
         writeLine(separator)
-        writeLine("=== NEW SESSION  ${sessionTimestamp()} ===")
+        writeLine("=== NEW SSTP SESSION  ${sessionTimestamp()} ===")
         if (details.isNotBlank()) {
             writeLine("    $details")
         }
@@ -80,15 +79,10 @@ internal object ConnectionLog {
     }
 
     /**
-     * Shared writer used by [append] and [startSession]: keeps the bounded
-     * in-memory ring buffer and the on-disk file in sync.
+     * Appends one line to the shared log file. The file is the single source of
+     * truth (the UI reads it back), so there is no separate in-memory buffer.
      */
     private fun writeLine(line: String) {
-        buffer.addLast(line)
-        while (buffer.size > MAX_LINES) {
-            buffer.removeFirst()
-        }
-
         try {
             val file = logFile ?: return
             if (file.exists() && file.length() > MAX_FILE_BYTES) {
@@ -101,11 +95,17 @@ internal object ConnectionLog {
     }
 
     @Synchronized
-    fun read(): String = buffer.joinToString("\n")
+    fun read(): String {
+        val file = logFile ?: return ""
+        return try {
+            if (file.exists()) file.readText() else ""
+        } catch (_: Throwable) {
+            ""
+        }
+    }
 
     @Synchronized
     fun clear() {
-        buffer.clear()
         try {
             logFile?.writeText("")
         } catch (_: Throwable) {

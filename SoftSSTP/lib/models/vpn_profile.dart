@@ -112,9 +112,6 @@ class VpnProfile {
   /// Delay between additional-connection attempts, in milliseconds.
   int seEstablishIntervalMs;
 
-  /// Duplex mode: "auto", "half" or "full".
-  String seDuplexMode;
-
   /// "Encrypt VPN Session with SSL".
   bool seEncrypt;
 
@@ -167,7 +164,6 @@ class VpnProfile {
     this.customSni = '',
     this.seTcpConnections = 4,
     this.seEstablishIntervalMs = 1000,
-    this.seDuplexMode = 'auto',
     this.seEncrypt = true,
     this.seDisableUdpAcceleration = true,
     this.seUdpPort = 0,
@@ -230,7 +226,6 @@ class VpnProfile {
     customSni: customSni,
     seTcpConnections: seTcpConnections,
     seEstablishIntervalMs: seEstablishIntervalMs,
-    seDuplexMode: seDuplexMode,
     seEncrypt: seEncrypt,
     seDisableUdpAcceleration: seDisableUdpAcceleration,
     seUdpPort: seUdpPort,
@@ -277,7 +272,6 @@ class VpnProfile {
     'customSni': customSni,
     'seTcpConnections': seTcpConnections,
     'seEstablishIntervalMs': seEstablishIntervalMs,
-    'seDuplexMode': seDuplexMode,
     'seEncrypt': seEncrypt,
     'seDisableUdpAcceleration': seDisableUdpAcceleration,
     'seUdpPort': seUdpPort,
@@ -329,7 +323,6 @@ class VpnProfile {
       seTcpConnections: (json['seTcpConnections'] as num?)?.toInt() ?? 4,
       seEstablishIntervalMs:
           (json['seEstablishIntervalMs'] as num?)?.toInt() ?? 1000,
-      seDuplexMode: (json['seDuplexMode'] ?? 'auto') as String,
       seEncrypt: (json['seEncrypt'] as bool?) ?? true,
       seDisableUdpAcceleration:
           (json['seDisableUdpAcceleration'] as bool?) ?? true,

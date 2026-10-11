@@ -226,6 +226,13 @@ static int try_connect_addr(softether_socket_t* sock, struct addrinfo* ai,
         }
     }
 
+    // Exclude the socket from the VPN tunnel before connecting (no-op when no
+    // hook is set). Must happen before connect(): the routing decision is made
+    // at connect time.
+    if (sock->protect_fn != NULL) {
+        sock->protect_fn(sock->protect_userdata, sock->fd);
+    }
+
     int result = connect(sock->fd, (struct sockaddr*)&sock->addr, sock->addr_len);
 
     if (result < 0 && errno == EINPROGRESS) {

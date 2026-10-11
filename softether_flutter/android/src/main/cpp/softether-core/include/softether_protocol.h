@@ -123,6 +123,12 @@ typedef struct {
 #define SE_ADDL_STAGE_AUTH_RESP  6  // reading the vpn.cgi response
 #define SE_ADDL_STAGE_SERVER_ERR 7  // server answered error=<n>
 
+// Optional platform hook invoked on a freshly created socket fd, before it is
+// connected. Android sets this to VpnService.protect so that additional TCP
+// connections opened after the tunnel is up bypass the VPN routing table
+// instead of being routed into the tunnel and hanging. Returns 0 on success.
+typedef int (*softether_protect_fn)(void* userdata, int fd);
+
 // Additional TCP socket for multi-connection support
 typedef struct {
     int socket_fd;
@@ -253,8 +259,8 @@ typedef struct softether_connection {
     softether_tcp_sock_t additional[MAX_SE_CONNECTIONS];  // additional TCP sockets (index 0 unused; primary is in socket_fd/ssl)
     int num_additional;          // number of active additional connections
     int max_connection;          // target max connections (sent in login PACK)
-    int half_connection;         // 0 = bidirectional, 1 = unidirectional per socket
-    int primary_direction;       // TCP_DIRECTION_* for primary socket (default BOTH)
+    int half_connection;         // always 0 (half-duplex mode removed); every link is bidirectional
+    int primary_direction;       // TCP_DIRECTION_* for primary socket (always BOTH now)
     uint32_t additional_connect_interval_ms;  // delay between additional-connect attempts (login-negotiated)
     uint64_t next_connect_time;  // monotonic timestamp for next additional connect attempt (ms)
     int additional_failed_count; // serial failure counter for additional connects
@@ -269,6 +275,11 @@ typedef struct softether_connection {
     int additional_connect_result; // result from background thread (0=success, -1=fail)
     int send_rr_idx;              // round-robin index for send socket selection
     uint64_t next_tcp_keepalive_time;  // monotonic timestamp for next periodic TCP keepalive sweep (ms)
+    // Platform hook to exclude new sockets from the VPN tunnel (see
+    // softether_protect_fn). NULL when unset; copied into each additional
+    // socket's protect_fn before connect.
+    softether_protect_fn protect_fn;
+    void* protect_userdata;
     // Phase 13C: preallocated TX staging buffer laid out as
     // "[block_count(4)][block_size(4)][ethernet frame]". Built and transmitted
     // under write_mutex (shared by softether_send / softether_send_packet). 
@@ -385,6 +396,12 @@ int softether_reconnect(softether_connection_t* conn);
 
 // Set authentication type explicitly (use CLIENT_AUTHTYPE_* constants; 0=auto)
 void softether_set_auth_type(softether_connection_t* conn, int auth_type);
+
+// Install a platform hook that is invoked on every newly created additional
+// socket before connect(), so the platform can protect it from the VPN tunnel.
+// Pass fn=NULL to clear. See softether_protect_fn.
+void softether_set_protect_callback(softether_connection_t* conn,
+                                    softether_protect_fn fn, void* userdata);
 // Override the auto-generated random client MAC (6 bytes, used for ARP/DHCP
 // identity). Use a MAC derived from the server identity so reconnects keep a
 // stable L2 address on local-bridge servers.

@@ -9,6 +9,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class SoftEtherClient {
 
+    /**
+     * Protects a socket fd from the VPN tunnel (wraps VpnService.protect).
+     * Implemented by the app and installed before connecting so that the
+     * additional SoftEther TCP sockets, which are opened after the tunnel is
+     * up, are not routed into the tunnel itself.
+     */
+    fun interface SocketProtector {
+        fun protect(fd: Int): Boolean
+    }
+
     private val tag = "SoftEtherClient"
     private var nativeHandle: Long = 0
     private val isConnected = AtomicBoolean(false)
@@ -25,21 +35,10 @@ class SoftEtherClient {
      * Handle of the connection currently managed by the app. ConnectionController
      * owns the native handle and publishes it through [externalHandle]; the
      * internal [nativeHandle] is only a fallback. Without this resolution the
-     * pre-connect setters (timeout, duplex, session options) and
+     * pre-connect setters (timeout, session options) and
      * [getAllSocketFds] silently targeted handle 0 and did nothing.
      */
     private fun activeHandle(): Long = externalHandle.takeIf { it != 0L } ?: nativeHandle
-
-    /**
-     * Set half/full-duplex mode (Phase 17).
-     * @param halfConnection true = half-duplex (directional C2S/S2C split),
-     *   false = full-duplex (all connections BOTH). Must be called before connect.
-     */
-    fun setHalfConnection(halfConnection: Boolean) {
-        val handle = activeHandle()
-        if (handle == 0L) return
-        nativeSetHalfConnection(handle, halfConnection)
-    }
 
     /**
      * Set session / multi-connection options from the profile (must be called
@@ -72,6 +71,17 @@ class SoftEtherClient {
         val handle = activeHandle()
         if (handle == 0L) return null
         return nativeGetAllSocketFds(handle)
+    }
+
+    /**
+     * Install (or clear, with null) the socket-protect callback. Must be called
+     * before connect: the native side invokes it on each new socket fd right
+     * before connect(), so the additional TCP connections bypass the tunnel.
+     */
+    fun setProtectCallback(protector: SocketProtector?) {
+        val handle = activeHandle()
+        if (handle == 0L) return
+        nativeSetProtectCallback(handle, protector)
     }
 
     /**
@@ -252,7 +262,7 @@ class SoftEtherClient {
     external fun nativeDoDhcp(handle: Long): IntArray?
     external fun nativeSetAuthType(handle: Long, authType: Int)
     external fun nativeSetMaxConnection(handle: Long, maxConnections: Int)
-    external fun nativeSetHalfConnection(handle: Long, halfConnection: Boolean)
+    external fun nativeSetProtectCallback(handle: Long, protector: SocketProtector?)
     external fun nativeSetSessionOptions(
         handle: Long, maxConnections: Int, establishIntervalMs: Int,
         useEncrypt: Boolean, useCompress: Boolean, qos: Boolean

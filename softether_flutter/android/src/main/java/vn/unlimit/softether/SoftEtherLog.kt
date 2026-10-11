@@ -10,20 +10,21 @@ import java.util.Locale
  * Collects a readable log of the whole SoftEther connection lifecycle so the
  * application (SoftSSTP) can show it to the user for diagnostics.
  *
- * Mirrors the SSTP plugin's ConnectionLog: when [enabled] is set, every line is
- * kept in a bounded in-memory ring buffer and appended to a text file inside the
+ * When [enabled] is set, every line is appended to a text file inside the
  * app-specific external storage, which is reachable without any runtime
  * permission. When [enabled] is false nothing is collected.
  *
- *     Android/data/<app>/files/softether_log.txt
+ * The SSTP plugin writes to the SAME file (see its ConnectionLog), so the app
+ * shows a single chronological log even across protocol switches; each session
+ * is delimited by a "=== NEW <PROTOCOL> SESSION ===" header.
+ *
+ *     Android/data/<app>/files/connection_log.txt
  */
 object SoftEtherLog {
-    private const val FILE_NAME = "softether_log.txt"
-    private const val MAX_LINES = 1000
+    // Shared with the SSTP plugin — keep the two constants in sync.
+    private const val FILE_NAME = "connection_log.txt"
     private const val MAX_FILE_BYTES = 512 * 1024
     private const val SESSION_SEPARATOR_LENGTH = 40
-
-    private val buffer = ArrayDeque<String>()
 
     @Volatile
     var enabled: Boolean = false
@@ -62,11 +63,11 @@ object SoftEtherLog {
         writeLine(separator)
     }
 
+    /**
+     * Appends one line to the shared log file. The file is the single source of
+     * truth (the UI reads it back), so there is no separate in-memory buffer.
+     */
     private fun writeLine(line: String) {
-        buffer.addLast(line)
-        while (buffer.size > MAX_LINES) {
-            buffer.removeFirst()
-        }
         try {
             val file = logFile ?: return
             if (file.exists() && file.length() > MAX_FILE_BYTES) {
@@ -79,11 +80,17 @@ object SoftEtherLog {
     }
 
     @Synchronized
-    fun read(): String = buffer.joinToString("\n")
+    fun read(): String {
+        val file = logFile ?: return ""
+        return try {
+            if (file.exists()) file.readText() else ""
+        } catch (_: Throwable) {
+            ""
+        }
+    }
 
     @Synchronized
     fun clear() {
-        buffer.clear()
         try {
             logFile?.writeText("")
         } catch (_: Throwable) {

@@ -26,6 +26,13 @@ typedef struct {
     socklen_t addr_len;
     int connected;
     int timeout_ms;
+    // Optional platform hook, called after the fd is created and before
+    // connect(). Android uses it to exclude the socket from the VPN tunnel
+    // (VpnService.protect): additional SoftEther TCP connections are opened
+    // while the tunnel is already up, so an unprotected connect() would be
+    // routed into the tunnel itself and hang until the connect timeout.
+    int (*protect_fn)(void* userdata, int fd);
+    void* protect_userdata;
 } softether_socket_t;
 
 // Function prototypes

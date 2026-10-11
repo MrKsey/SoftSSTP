@@ -55,6 +55,12 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
     JNIEnv *env, jobject thiz, jlong handle, jint maxConnections, jint intervalMs,
     jboolean useEncrypt, jboolean useCompress, jboolean qos);
 
+// Installs (or clears, with null) the socket-protect callback: the native
+// connect path calls SocketProtector.protect(fd) on each new socket before
+// connecting it, so Android can exclude it from the VPN tunnel.
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetProtectCallback(
+    JNIEnv *env, jobject thiz, jlong handle, jobject protector);
+
 JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNumConnections(
     JNIEnv *env, jobject thiz, jlong handle);
 

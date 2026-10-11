@@ -105,7 +105,9 @@ static int raw_read_all(softether_connection_t* conn, uint8_t* buf, int len) {
         }
         int ret = (int)recv(conn->socket_fd, buf + total, len - total, 0);
         if (ret <= 0) {
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // EAGAIN = SO_RCVTIMEO expired; return instead of spinning so a
+            // stalled primary link cannot hang the caller forever.
+            if (ret < 0 && errno == EINTR) {
                 continue;
             }
             LOGE("raw_read_all: recv returned %d (errno=%d)", ret, errno);
@@ -125,7 +127,8 @@ static int raw_write_all(softether_connection_t* conn, const uint8_t* buf, int l
         }
         int ret = (int)send(conn->socket_fd, buf + total, len - total, 0);
         if (ret <= 0) {
-            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // EAGAIN = SO_SNDTIMEO expired; report failure instead of spinning.
+            if (ret < 0 && errno == EINTR) {
                 continue;
             }
             LOGE("raw_write_all: send returned %d (errno=%d)", ret, errno);
@@ -152,12 +155,14 @@ static int ssl_read_all_ctx(ssl_context_t* ssl, uint8_t* buf, int len) {
 }
 
 // Read exactly `len` bytes from a specific raw TCP fd (not conn->socket_fd).
+// EAGAIN means SO_RCVTIMEO expired (or the caller polled but data was consumed):
+// bail out instead of spinning, so a stalled link cannot hang the receive loop.
 static int raw_read_all_fd(int fd, uint8_t* buf, int len) {
     int total = 0;
     while (total < len) {
         int ret = (int)recv(fd, buf + total, len - total, 0);
         if (ret < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            if (errno == EINTR) {
                 continue;
             }
             return -1;
@@ -261,7 +266,9 @@ static int data_write_all_sock(softether_connection_t* conn,
         while (total < len) {
             int ret = (int)send(socket_fd, buf + total, len - total, 0);
             if (ret <= 0) {
-                if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+                // EAGAIN = SO_SNDTIMEO expired: report failure instead of
+                // spinning forever on a saturated or stalled link.
+                if (ret < 0 && errno == EINTR) continue;
                 return -1;
             }
             total += ret;

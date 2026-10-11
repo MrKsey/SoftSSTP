@@ -691,12 +691,12 @@ class SoftEtherVpnService : VpnService() {
     }
 
     private fun formatTrafficSnapshot(snapshot: SoftEtherTrafficSnapshot): String {
+        // Speed only, matching the SSTP notification: the totals made the
+        // status line too long and are already shown in the app.
         return getString(
-            R.string.softether_statusline_bytecount,
+            R.string.softether_statusline_speed,
             humanReadableByteCount(snapshot.inBytesPerSecond(), true),
-            humanReadableByteCount(snapshot.inBytes, false),
-            humanReadableByteCount(snapshot.outBytesPerSecond(), true),
-            humanReadableByteCount(snapshot.outBytes, false)
+            humanReadableByteCount(snapshot.outBytesPerSecond(), true)
         )
     }
 

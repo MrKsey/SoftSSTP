@@ -56,9 +56,6 @@ class SoftetherServer {
   /// Windows client's "Additional Connection Establishing Interval".
   final int establishIntervalMs;
 
-  /// Duplex mode: "auto" (pick by device tier), "half" or "full".
-  final String duplexMode;
-
   /// Request SSL encryption of the session data ("Encrypt VPN Session with SSL").
   final bool useEncrypt;
 
@@ -91,7 +88,6 @@ class SoftetherServer {
     this.connectTimeoutMs = 30000,
     this.maxConnections = 4,
     this.establishIntervalMs = 1000,
-    this.duplexMode = 'auto',
     this.useEncrypt = true,
     this.useCompress = false,
     this.disableUdpAcceleration = true,
@@ -115,7 +111,6 @@ class SoftetherServer {
         'connectTimeoutMs': connectTimeoutMs,
         'maxConnections': maxConnections,
         'establishIntervalMs': establishIntervalMs,
-        'duplexMode': duplexMode,
         'useEncrypt': useEncrypt,
         'useCompress': useCompress,
         'disableUdpAcceleration': disableUdpAcceleration,

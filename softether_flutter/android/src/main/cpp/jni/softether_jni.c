@@ -10,11 +10,88 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
+static JavaVM* g_jvm = NULL;
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
+    g_jvm = vm;
     signal(SIGPIPE, SIG_IGN);
     LOGD("JNI_OnLoad: SIGPIPE ignored");
     return JNI_VERSION_1_6;
+}
+
+// Currently installed protect target (SoftEtherClient.SocketProtector). Only one
+// VPN tunnel is active at a time, so a single global reference is enough: it is
+// replaced on every connect and released when a new one is installed.
+static jobject g_protector = NULL;
+static jmethodID g_protect_method = NULL;
+
+// Invoked from the native connect path (possibly on a background thread) for a
+// freshly created socket fd, before connect(). Attaches the thread to the JVM if
+// needed and calls SocketProtector.protect(fd) so Android can exclude the socket
+// from the VPN tunnel (VpnService.protect). Returns 0 on success.
+static int jni_protect_fd(void* userdata, int fd) {
+    (void)userdata;
+    if (g_jvm == NULL || g_protector == NULL || g_protect_method == NULL) {
+        return -1;
+    }
+
+    JNIEnv* env = NULL;
+    int attached = 0;
+    if ((*g_jvm)->GetEnv(g_jvm, (void**)&env, JNI_VERSION_1_6) == JNI_EDETACHED) {
+        if ((*g_jvm)->AttachCurrentThread(g_jvm, (void**)&env, NULL) != JNI_OK) {
+            LOGW("protect: AttachCurrentThread failed");
+            return -1;
+        }
+        attached = 1;
+    }
+
+    jboolean ok = (*env)->CallBooleanMethod(env, g_protector, g_protect_method, (jint)fd);
+    if ((*env)->ExceptionCheck(env)) {
+        LOGE("protect: Java exception in SocketProtector.protect");
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        ok = JNI_FALSE;
+    }
+
+    if (attached) {
+        (*g_jvm)->DetachCurrentThread(g_jvm);
+    }
+
+    LOGD("protect: fd=%d -> %s", fd, ok == JNI_TRUE ? "ok" : "failed");
+    return ok == JNI_TRUE ? 0 : -1;
+}
+
+// Install (or clear, with protector=null) the socket-protect callback on the
+// native connection. Must be called before connecting so additional TCP sockets
+// bypass the tunnel.
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetProtectCallback(
+    JNIEnv *env, jobject thiz, jlong handle, jobject protector) {
+    if (handle == 0) {
+        LOGE("Invalid handle for setProtectCallback");
+        return;
+    }
+    softether_connection_t* conn = (softether_connection_t*)handle;
+
+    if (g_protector != NULL) {
+        (*env)->DeleteGlobalRef(env, g_protector);
+        g_protector = NULL;
+        g_protect_method = NULL;
+    }
+
+    if (protector != NULL) {
+        g_protector = (*env)->NewGlobalRef(env, protector);
+        jclass cls = (*env)->GetObjectClass(env, protector);
+        g_protect_method = (*env)->GetMethodID(env, cls, "protect", "(I)Z");
+        (*env)->DeleteLocalRef(env, cls);
+        if (g_protect_method == NULL) {
+            LOGE("setProtectCallback: SocketProtector.protect(I)Z not found");
+            (*env)->DeleteGlobalRef(env, g_protector);
+            g_protector = NULL;
+        }
+    }
+
+    softether_set_protect_callback(conn, g_protector != NULL ? jni_protect_fd : NULL, NULL);
 }
 
 // JNI Implementation for SoftEtherClient
@@ -48,6 +125,15 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeDe
     LOGD("Destroying connection in state: %s", softether_state_string(state));
     
     softether_destroy(conn);
+    // Release the protect-callback target: it holds a global reference to the
+    // app's SocketProtector (which captures the VpnService), so keeping it after
+    // teardown would pin the service. Safe here — teardown runs only once the
+    // connect flow has ended, so no protect upcall can be in flight.
+    if (g_protector != NULL) {
+        (*env)->DeleteGlobalRef(env, g_protector);
+        g_protector = NULL;
+        g_protect_method = NULL;
+    }
     LOGD("nativeDestroy completed");
 }
 
@@ -350,19 +436,6 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
     if (maxConnections > MAX_SE_CONNECTIONS) maxConnections = MAX_SE_CONNECTIONS;
     conn->max_connection = maxConnections;
     LOGD("Set max_connection to %d", conn->max_connection);
-}
-
-// Phase 17: set half/full-duplex mode. halfConnection=1 -> half-duplex (directional
-// C2S/S2C split, primary becomes C2S); halfConnection=0 -> full-duplex (all BOTH).
-JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetHalfConnection(
-    JNIEnv *env, jobject thiz, jlong handle, jboolean halfConnection) {
-    if (handle == 0) {
-        LOGE("Invalid handle for setHalfConnection");
-        return;
-    }
-    softether_connection_t* conn = (softether_connection_t*)handle;
-    conn->half_connection = halfConnection ? 1 : 0;
-    LOGD("Set half_connection to %d", conn->half_connection);
 }
 
 // Session / multi-connection options from the profile (SoftEther Windows client

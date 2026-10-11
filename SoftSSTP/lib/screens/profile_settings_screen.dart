@@ -40,7 +40,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   // SoftEther session options (Windows-client equivalents).
   final _seTcpConnectionsController = TextEditingController();
   final _seIntervalController = TextEditingController();
-  String _seDuplexMode = 'auto';
   bool _seEncrypt = true;
   bool _seDisableUdpAcceleration = true;
   bool _seDisableQos = false;
@@ -140,7 +139,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
     _seTcpConnectionsController.text = profile.seTcpConnections.toString();
     _seIntervalController.text = profile.seEstablishIntervalMs.toString();
-    _seDuplexMode = profile.seDuplexMode;
     _seEncrypt = profile.seEncrypt;
     _seDisableUdpAcceleration = profile.seDisableUdpAcceleration;
     _seDisableQos = profile.seDisableQos;
@@ -923,41 +921,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           Row(
             children: [
               Expanded(
-                child: _dropdownTitleRow('Duplex mode', help: _seDuplexHelp),
-              ),
-              DropdownButton<String>(
-                value: _seDuplexMode,
-                dropdownColor: AppTheme.cardColor,
-                style: TextStyle(color: AppTheme.textPrimary),
-                underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'auto',
-                    child: Text('Auto', style: TextStyle(fontSize: 14)),
-                  ),
-                  DropdownMenuItem(
-                    value: 'half',
-                    child: Text('Half', style: TextStyle(fontSize: 14)),
-                  ),
-                  DropdownMenuItem(
-                    value: 'full',
-                    child: Text('Full', style: TextStyle(fontSize: 14)),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() {
-                      _seDuplexMode = value;
-                    });
-                  }
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
                 child: TextFormField(
                   controller: _mtuController,
                   style: TextStyle(color: AppTheme.textPrimary),
@@ -1027,11 +990,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ),
     );
   }
-
-  static const String _seDuplexHelp =
-      'Auto picks half or full duplex from the device tier and link quality. '
-      'Half splits each connection into a direction; Full makes every '
-      'connection bidirectional.';
 
   Widget _buildRoutingSection() {
     return Container(
@@ -1581,25 +1539,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     );
   }
 
-  /// Title row used by dropdown settings: label + optional help button.
-  Widget _dropdownTitleRow(String title, {String? help}) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
-              color: AppTheme.textPrimary,
-            ),
-          ),
-        ),
-        if (help != null) _helpIcon(title, help),
-      ],
-    );
-  }
-
   /// A full reference of every option, grouped by protocol.
   void _showHelpDialog() {
     const sstpHelp = <(String, String)>[
@@ -1711,12 +1650,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         'Establishing interval',
         'Milliseconds to wait between opening additional connections, so they '
             'are not established all at once. Default 1000 ms.',
-      ),
-      (
-        'Duplex mode',
-        'Auto picks half or full duplex from the device tier and link quality. '
-            'Half splits each connection into a direction; Full makes every '
-            'connection bidirectional.',
       ),
       ('MTU', 'Tunnel MTU. Lower it if large packets are dropped (e.g. 1400).'),
       (
@@ -1933,7 +1866,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       customSni: _sniController.text.trim(),
       seTcpConnections: int.tryParse(_seTcpConnectionsController.text) ?? 4,
       seEstablishIntervalMs: int.tryParse(_seIntervalController.text) ?? 1000,
-      seDuplexMode: _seDuplexMode,
       seEncrypt: _seEncrypt,
       seDisableUdpAcceleration: _seDisableUdpAcceleration,
       seDisableQos: _seDisableQos,

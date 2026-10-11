@@ -687,10 +687,10 @@ static uint8_t* build_login_pack(const char* hub_name, const char* username,
     // Data compression: off by default (VPN Gate traffic is TLS-encrypted and
     // incompressible; zlib per block only burns CPU). Exposed as a profile option.
     pack_add_int(&p, "use_compress", conn->req_use_compress ? 1 : 0);
-    // Phase 17: half_connection is device-tier driven (Kotlin sets conn->half_connection
-    // before connect). 1 = half-duplex (primary C2S, additional S2C/C2S split);
-    // 0 = full-duplex (every connection negotiated BOTH).
-    pack_add_int(&p, "half_connection", conn->half_connection ? 1 : 0);
+    // Every connection is bidirectional: half-connection mode was removed
+    // (its directional C2S/S2C split dropped the whole receive path when one
+    // link failed). Always negotiate full-duplex.
+    pack_add_int(&p, "half_connection", 0);
     pack_add_int(&p, "require_bridge_routing_mode", 0);
     pack_add_int(&p, "require_monitor_mode", 0);
     pack_add_int(&p, "qos", conn->req_qos ? 1 : 0);
@@ -999,6 +999,8 @@ softether_connection_t* softether_create(void) {
     conn->num_additional = 0;
     conn->max_connection = 4;  // Target: request 4 connections in login PACK
     conn->half_connection = 0;
+    conn->protect_fn = NULL;
+    conn->protect_userdata = NULL;
     conn->primary_direction = TCP_DIRECTION_BOTH;
     conn->additional_connect_interval_ms = ADDITIONAL_CONNECT_INTERVAL_MS;
     conn->next_connect_time = 0;
@@ -1431,13 +1433,6 @@ static int perform_authentication_http(softether_connection_t* conn,
     pack_get_int((const uint8_t*)body, body_len, "use_fast_rc4", &conn->server_use_fast_rc4);
     pack_get_int((const uint8_t*)body, body_len, "timeout", &conn->server_timeout);
 
-    // Parse half_connection from server response
-    uint32_t half_conn = 0;
-    if (pack_get_int((const uint8_t*)body, body_len, "half_connection", &half_conn) == 0) {
-        conn->half_connection = (int)half_conn;
-        LOGD("Server half_connection=%u", half_conn);
-    }
-    
     // Data channel mode. SoftEther's use_encrypt flag selects whether the session
     // data is carried inside SSL: the reference client transmits every data block
     // with Send(sock, data, size, UseEncrypt) (Connection.c:2145), so with session
@@ -1529,35 +1524,6 @@ static int perform_authentication_http(softether_connection_t* conn,
     conn->session_established = 1;
 
     return ERR_NONE;
-}
-
-// Establish the first additional connection synchronously (before DHCP).
-// This ensures at least one S2C socket exists for receiving data when
-// half_connection mode is enabled (server sets primary to C2S).
-// Returns 0 on success, -1 on failure. Also sets primary_direction = C2S on success.
-static int softether_establish_first_additional(softether_connection_t* conn) {
-    if (conn == NULL) return -1;
-
-    LOGD("Establishing first additional connection for half-connection...");
-
-    int result = softether_additional_connect(conn);
-    if (result == 0) {
-        // Check if we got an S2C socket — if so, switch primary to C2S
-        for (int i = 0; i < MAX_SE_CONNECTIONS; i++) {
-            if (conn->additional[i].active &&
-                conn->additional[i].direction == TCP_DIRECTION_SERVER_TO_CLIENT) {
-                conn->primary_direction = TCP_DIRECTION_CLIENT_TO_SERVER;
-                LOGD("Half-connection: first additional is S2C (fd=%d), primary switched to C2S",
-                     conn->additional[i].socket_fd);
-                return 0;
-            }
-        }
-        // Additional connected but no S2C — keep primary BOTH (shouldn't happen)
-        LOGW("Half-connection: first additional has no S2C direction, primary stays BOTH");
-    } else {
-        LOGW("Half-connection: first additional connect failed (%d), primary stays BOTH", result);
-    }
-    return result;
 }
 
 // SoftEther Protocol Steps 1+2: send the VPNCONNECT watermark (connect.cgi) to
@@ -2452,6 +2418,11 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
         softether_socket_t* sock = force_nat_t ? NULL : socket_create(SOCKET_TYPE_TCP);
         int tcp_ok = 0;
         if (sock != NULL) {
+            // Protect the primary socket too: on a reconnect the previous tunnel
+            // may still be up, so an unprotected connect() would be routed into
+            // it and hang until the connect timeout.
+            sock->protect_fn = conn->protect_fn;
+            sock->protect_userdata = conn->protect_userdata;
             if (socket_connect_timeout(sock, connect_host, port, conn->timeout_ms) != 0) {
                 // Fallback: retry with the remaining IP version explicitly resolved.
                 char fallback_ip[64] = "";
@@ -2668,6 +2639,9 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
         tv.tv_sec = data_timeout_ms / 1000;
         tv.tv_usec = (data_timeout_ms % 1000) * 1000;
         setsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        // Bound the send path too: without SO_SNDTIMEO a full socket buffer
+        // blocks send() forever, stalling the whole receive loop.
+        setsockopt(conn->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         LOGD("Socket timeout set to %d ms for data operations", data_timeout_ms);
     } else {
         LOGE("No valid socket after connection setup");
@@ -2675,14 +2649,8 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
         return ERR_TCP_CONNECT;
     }
 
-    // Half-connection: establish first additional connection synchronously before returning.
-    // Server sets primary to C2S on its side after login, so we need at least one S2C
-    // additional socket to receive data (DHCP etc.) before the caller starts receiving.
-    if (conn->half_connection) {
-        softether_establish_first_additional(conn);
-        // Even if this failed, we proceed — primary stays BOTH as fallback.
-        // The caller (DHCP, receive loop) will handle missing S2C gracefully.
-    }
+    // Half-connection mode is no longer used: every SoftEther TCP connection is
+    // bidirectional (half_connection=0 in the login PACK). See softether_create().
 
     return ERR_NONE;
 }
@@ -3617,6 +3585,13 @@ int softether_additional_connect(softether_connection_t* conn) {
         return -1;
     }
 
+    // Protect the socket from the VPN tunnel before connecting (Android
+    // VpnService.protect via JNI). The tunnel is already up at this point, so
+    // without this the connect() is routed into the tunnel and hangs until the
+    // connect timeout (the "addlStage=tcp addlLastMs=30000" symptom).
+    sock->protect_fn = conn->protect_fn;
+    sock->protect_userdata = conn->protect_userdata;
+
     if (socket_connect_timeout(sock, conn->server_ip, conn->server_port, conn->timeout_ms) != 0) {
         LOGE("additional_connect: TCP connect failed");
         socket_destroy(sock);
@@ -3662,6 +3637,8 @@ int softether_additional_connect(softether_connection_t* conn) {
     tv.tv_sec = data_timeout_ms / 1000;
     tv.tv_usec = (data_timeout_ms % 1000) * 1000;
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    // Bound sends as well so a stalled link cannot block the receive loop.
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     // Step 3: Send SoftEther signature (VPNCONNECT watermark)
     conn->additional_last_stage = SE_ADDL_STAGE_WATERMARK;
@@ -4020,6 +3997,15 @@ void softether_set_auth_type(softether_connection_t* conn, int auth_type) {
     if (conn) {
         conn->forced_auth_type = auth_type;
         LOGD("Auth type set to %d", auth_type);
+    }
+}
+
+void softether_set_protect_callback(softether_connection_t* conn,
+                                    softether_protect_fn fn, void* userdata) {
+    if (conn) {
+        conn->protect_fn = fn;
+        conn->protect_userdata = userdata;
+        LOGD("Protect callback %s", fn != NULL ? "installed" : "cleared");
     }
 }
 

@@ -52,10 +52,6 @@ data class ConnectionConfig(
     val clientProductName: String = "VPN Gate Connector",
     val clientVersion: String = "1.0.0",
     val clientBuild: Int = 1,
-    // Phase 17: manual override for half/full-duplex auto-selection.
-    // null = auto-select by device tier; true = force full-duplex (all BOTH);
-    // false = force half-duplex (directional C2S/S2C split).
-    val fullDuplex: Boolean? = null,
     // Optional client MAC address ("AA:BB:CC:DD:EE:FF"). When empty the native
     // side derives a stable MAC from the server identity.
     val clientMac: String = "",
@@ -103,13 +99,6 @@ data class ConnectionConfig(
         clientProductName = parcel.readString() ?: "VPN Gate Connector",
         clientVersion = parcel.readString() ?: "1.0.0",
         clientBuild = parcel.readInt(),
-        fullDuplex = parcel.readByte().let { b ->
-            when (b) {
-                0.toByte() -> null
-                1.toByte() -> true
-                else -> false
-            }
-        },
         clientMac = parcel.readString() ?: "",
         maxConnections = parcel.readInt(),
         establishIntervalMs = parcel.readInt(),
@@ -151,11 +140,6 @@ data class ConnectionConfig(
         parcel.writeString(clientProductName)
         parcel.writeString(clientVersion)
         parcel.writeInt(clientBuild)
-        parcel.writeByte(when (fullDuplex) {
-            null -> 0
-            true -> 1
-            false -> 2
-        })
         parcel.writeString(clientMac)
         parcel.writeInt(maxConnections)
         parcel.writeInt(establishIntervalMs)
