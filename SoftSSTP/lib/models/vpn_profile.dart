@@ -118,9 +118,6 @@ class VpnProfile {
   /// "Encrypt VPN Session with SSL".
   bool seEncrypt;
 
-  /// "Use Data Compression".
-  bool seCompress;
-
   /// "Disable UDP Acceleration".
   bool seDisableUdpAcceleration;
 
@@ -172,7 +169,6 @@ class VpnProfile {
     this.seEstablishIntervalMs = 1000,
     this.seDuplexMode = 'auto',
     this.seEncrypt = true,
-    this.seCompress = false,
     this.seDisableUdpAcceleration = true,
     this.seUdpPort = 0,
     this.seDisableQos = false,
@@ -236,7 +232,6 @@ class VpnProfile {
     seEstablishIntervalMs: seEstablishIntervalMs,
     seDuplexMode: seDuplexMode,
     seEncrypt: seEncrypt,
-    seCompress: seCompress,
     seDisableUdpAcceleration: seDisableUdpAcceleration,
     seUdpPort: seUdpPort,
     seDisableQos: seDisableQos,
@@ -284,7 +279,6 @@ class VpnProfile {
     'seEstablishIntervalMs': seEstablishIntervalMs,
     'seDuplexMode': seDuplexMode,
     'seEncrypt': seEncrypt,
-    'seCompress': seCompress,
     'seDisableUdpAcceleration': seDisableUdpAcceleration,
     'seUdpPort': seUdpPort,
     'seDisableQos': seDisableQos,
@@ -337,7 +331,6 @@ class VpnProfile {
           (json['seEstablishIntervalMs'] as num?)?.toInt() ?? 1000,
       seDuplexMode: (json['seDuplexMode'] ?? 'auto') as String,
       seEncrypt: (json['seEncrypt'] as bool?) ?? true,
-      seCompress: (json['seCompress'] as bool?) ?? false,
       seDisableUdpAcceleration:
           (json['seDisableUdpAcceleration'] as bool?) ?? true,
       seUdpPort: (json['seUdpPort'] as num?)?.toInt() ?? 0,

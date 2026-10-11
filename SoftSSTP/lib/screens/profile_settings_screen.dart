@@ -42,7 +42,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   final _seIntervalController = TextEditingController();
   String _seDuplexMode = 'auto';
   bool _seEncrypt = true;
-  bool _seCompress = false;
   bool _seDisableUdpAcceleration = true;
   bool _seDisableQos = false;
 
@@ -143,7 +142,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     _seIntervalController.text = profile.seEstablishIntervalMs.toString();
     _seDuplexMode = profile.seDuplexMode;
     _seEncrypt = profile.seEncrypt;
-    _seCompress = profile.seCompress;
     _seDisableUdpAcceleration = profile.seDisableUdpAcceleration;
     _seDisableQos = profile.seDisableQos;
   }
@@ -981,30 +979,16 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           _buildSwitchTile(
             icon: Icons.enhanced_encryption_outlined,
             title: 'Encrypt VPN Session with SSL',
-            subtitle: 'Ask the server to encrypt the session data',
+            subtitle: 'Encrypt the session data channel',
             value: _seEncrypt,
             help:
-                'The data channel always runs over TLS. This option only sets '
-                'the session-encryption request in the login handshake; the '
-                'server decides the final value, which the connection log shows.',
+                'On: the data channel runs inside TLS. Off: the login handshake '
+                'still runs over TLS, but the tunnel data is sent unencrypted '
+                'on the raw TCP connection, exactly like the Windows client. '
+                'The negotiated state is shown in the connection log.',
             onChanged: (value) {
               setState(() {
                 _seEncrypt = value;
-              });
-            },
-          ),
-          Divider(color: AppTheme.dividerColor, height: 24),
-          _buildSwitchTile(
-            icon: Icons.compress_outlined,
-            title: 'Use Data Compression',
-            subtitle: 'Ask the server to compress the session data',
-            value: _seCompress,
-            help:
-                'Off by default: VPN traffic is mostly TLS and '
-                'incompressible, so it usually only costs CPU.',
-            onChanged: (value) {
-              setState(() {
-                _seCompress = value;
               });
             },
           ),
@@ -1737,15 +1721,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ('MTU', 'Tunnel MTU. Lower it if large packets are dropped (e.g. 1400).'),
       (
         'Encrypt VPN Session with SSL',
-        'The data channel always runs over TLS. This option only sets the '
-            'session-encryption request in the login handshake; the server '
-            'decides the final value, which the connection log shows.',
-      ),
-      (
-        'Use Data Compression',
-        'Ask the server to compress the session data. Off by default: VPN '
-            'traffic is mostly TLS and incompressible, so it usually only '
-            'costs CPU.',
+        'On: the data channel runs inside TLS. Off: the login handshake still '
+            'runs over TLS, but the tunnel data is sent unencrypted on the raw '
+            'TCP connection, exactly like the Windows client. The negotiated '
+            'state is shown in the connection log.',
       ),
       (
         'Disable UDP Acceleration',
@@ -1956,7 +1935,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       seEstablishIntervalMs: int.tryParse(_seIntervalController.text) ?? 1000,
       seDuplexMode: _seDuplexMode,
       seEncrypt: _seEncrypt,
-      seCompress: _seCompress,
       seDisableUdpAcceleration: _seDisableUdpAcceleration,
       seDisableQos: _seDisableQos,
       // Keep the parsed UDP port from the public server list, if any.

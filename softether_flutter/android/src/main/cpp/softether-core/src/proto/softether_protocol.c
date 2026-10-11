@@ -1008,6 +1008,10 @@ softether_connection_t* softether_create(void) {
     conn->additional_connect_slot = -1;
     conn->additional_connect_result = -1;
 
+    // Data channel starts encrypted; softether_connect_with_hub replaces this
+    // with the server-negotiated use_encrypt value once the Welcome PACK arrives.
+    conn->use_ssl_data = 1;
+
     // Session options requested in the login PACK (Windows-client defaults:
     // SSL encryption on, compression off, VoIP/QoS on).
     conn->req_use_encrypt = 1;
@@ -1412,7 +1416,17 @@ static int perform_authentication_http(softether_connection_t* conn,
     }
     pack_get_int((const uint8_t*)body, body_len, "session_key_32", &conn->session_key_32);
     pack_get_int((const uint8_t*)body, body_len, "max_connection", &conn->server_max_connection);
-    pack_get_int((const uint8_t*)body, body_len, "use_encrypt", &conn->server_use_encrypt);
+    // use_encrypt selects whether the *data* channel is carried inside SSL.
+    // Default to 1 (encrypted) when the field is absent: sending raw bytes to a
+    // server that expects TLS data corrupts the stream.
+    {
+        uint32_t srv_encrypt = 1;
+        if (pack_get_int((const uint8_t*)body, body_len, "use_encrypt", &srv_encrypt) != 0) {
+            LOGW("Welcome PACK has no use_encrypt field; assuming an SSL data channel");
+            srv_encrypt = 1;
+        }
+        conn->server_use_encrypt = srv_encrypt;
+    }
     pack_get_int((const uint8_t*)body, body_len, "use_compress", &conn->server_use_compress);
     pack_get_int((const uint8_t*)body, body_len, "use_fast_rc4", &conn->server_use_fast_rc4);
     pack_get_int((const uint8_t*)body, body_len, "timeout", &conn->server_timeout);
@@ -1424,14 +1438,16 @@ static int perform_authentication_http(softether_connection_t* conn,
         LOGD("Server half_connection=%u", half_conn);
     }
     
-    // Determine data channel mode. This client always establishes the session
-    // over the SSL-VPN (TLS) transport, so the data channel always runs through
-    // the TLS layer. The server's use_encrypt / use_fast_rc4 flags select
-    // SoftEther's *session* encryption, which sits INSIDE that TLS transport;
-    // they must not switch the data path to raw TCP — the raw path writes
-    // plaintext onto the TLS socket and corrupts the stream.
-    conn->use_ssl_data = 1;
-    LOGD("Data channel: TLS (server use_encrypt=%u, use_fast_rc4=%u)",
+    // Data channel mode. SoftEther's use_encrypt flag selects whether the session
+    // data is carried inside SSL: the reference client transmits every data block
+    // with Send(sock, data, size, UseEncrypt) (Connection.c:2145), so with session
+    // encryption disabled the data channel is raw TCP while the control handshake
+    // (connect.cgi / vpn.cgi) still runs over TLS. Mirror the negotiated flag so
+    // both ends switch the data channel at the same point — this is what the
+    // Windows client's "Encrypt VPN Session with SSL" checkbox controls.
+    conn->use_ssl_data = (conn->server_use_encrypt != 0) ? 1 : 0;
+    LOGD("Data channel: %s (server use_encrypt=%u, use_fast_rc4=%u)",
+         conn->use_ssl_data ? "TLS" : "raw TCP",
          conn->server_use_encrypt, conn->server_use_fast_rc4);
     LOGD("Server use_compress=%u", conn->server_use_compress);
     // Phase 13B: mirror the negotiated compression state into the RUDP context
@@ -3537,7 +3553,12 @@ void softether_close_additional(softether_connection_t* conn) {
 static void* additional_connect_thread_routine(void* arg) {
     softether_connection_t* conn = (softether_connection_t*)arg;
     int slot = conn->additional_connect_slot;
+    // Diagnostics: how long the attempt took. Combined with the stage it failed
+    // at, the duration separates "the peer stalled until the handshake deadline"
+    // from "the peer rejected the connection straight away".
+    uint64_t attempt_start = softether_tick_ms();
     int result = softether_additional_connect(conn);
+    conn->additional_last_attempt_ms = (int)(softether_tick_ms() - attempt_start);
     conn->additional_connect_result = result;
     conn->additional_connecting = 0;
     LOGD("Background additional connect thread finished (slot=%d result=%d)", slot, result);
@@ -3575,8 +3596,15 @@ int softether_additional_connect(softether_connection_t* conn) {
     }
     if (slot < 0) {
         LOGD("additional_connect: no free slot (num_additional=%d)", conn->num_additional);
+        conn->additional_last_stage = SE_ADDL_STAGE_NO_SLOT;
         return -1;
     }
+
+    // Diagnostics: publish the stage of the current attempt so a failing
+    // multi-connection setup can be read back from the app log.
+    conn->additional_attempts++;
+    conn->additional_last_stage = SE_ADDL_STAGE_TCP;
+    conn->additional_last_error = 0;
 
     LOGD("additional_connect: opening connection to %s:%d (slot %d)",
          conn->server_ip, conn->server_port, slot);
@@ -3601,6 +3629,7 @@ int softether_additional_connect(softether_connection_t* conn) {
     socket_destroy(sock);
 
     // Step 2: TLS handshake
+    conn->additional_last_stage = SE_ADDL_STAGE_TLS;
     ssl_context_t* ssl_ctx = ssl_create_client();
     if (ssl_ctx == NULL) {
         LOGE("additional_connect: failed to create SSL context");
@@ -3609,8 +3638,14 @@ int softether_additional_connect(softether_connection_t* conn) {
         return -1;
     }
 
-    if (ssl_connect(ssl_ctx, fd, conn->server_ip) != 0) {
-        LOGE("additional_connect: TLS handshake failed");
+    // SNI carries the original hostname, never the resolved IP: the reference
+    // client passes c->ServerName to StartSSLEx() for additional connections as
+    // well (Protocol.c:3877-3900). Servers fronted by a name-based proxy stall
+    // or drop the handshake when SNI is a bare IP address.
+    const char* sni_host = (conn->server_host_name[0] != '\0')
+                               ? conn->server_host_name : conn->server_ip;
+    if (ssl_connect(ssl_ctx, fd, sni_host) != 0) {
+        LOGE("additional_connect: TLS handshake failed (SNI %s)", sni_host);
         ssl_destroy(ssl_ctx);
         close(fd);
         conn->additional_failed_count++;
@@ -3629,6 +3664,7 @@ int softether_additional_connect(softether_connection_t* conn) {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     // Step 3: Send SoftEther signature (VPNCONNECT watermark)
+    conn->additional_last_stage = SE_ADDL_STAGE_WATERMARK;
     {
         const char* watermark = "VPNCONNECT";
         size_t watermark_len = strlen(watermark);
@@ -3727,6 +3763,7 @@ int softether_additional_connect(softether_connection_t* conn) {
     }
 
     // Step 4: Send "additional_connect" method with session_key
+    conn->additional_last_stage = SE_ADDL_STAGE_AUTH;
     {
         uint32_t pack_size = 4;  // num_elements (uint32)
         pack_size += PACK_STR_SZ("method", "additional_connect");
@@ -3795,6 +3832,7 @@ int softether_additional_connect(softether_connection_t* conn) {
     }
 
     // Read the additional_connect response
+    conn->additional_last_stage = SE_ADDL_STAGE_AUTH_RESP;
     {
         uint8_t auth_resp[4096];
         int hdr_len = 0;
@@ -3858,6 +3896,8 @@ int softether_additional_connect(softether_connection_t* conn) {
             if (pack_get_int(auth_resp + body_off, (uint32_t)body_ln, "error", &err_val) == 0) {
                 if (err_val != 0) {
                     LOGE("additional_connect: server returned error %u", err_val);
+                    conn->additional_last_stage = SE_ADDL_STAGE_SERVER_ERR;
+                    conn->additional_last_error = (int)err_val;
                     ssl_shutdown(ssl_ctx);
                     ssl_destroy(ssl_ctx);
                     close(fd);
@@ -3889,6 +3929,8 @@ int softether_additional_connect(softether_connection_t* conn) {
     LOGD("additional_connect: SUCCESS slot=%d fd=%d direction=%u num_additional=%d",
          slot, fd, server_direction, conn->num_additional);
 
+    conn->additional_last_stage = SE_ADDL_STAGE_NONE;
+    conn->additional_last_error = 0;
     conn->additional_failed_count = 0;
     return 0;
 }
@@ -4018,6 +4060,11 @@ void softether_get_session_info(softether_connection_t* conn,
     out->server_use_encrypt = (int)conn->server_use_encrypt;
     out->server_use_compress = (int)conn->server_use_compress;
     out->using_nat_t = conn->using_nat_t;
+    out->additional_attempts = conn->additional_attempts;
+    out->additional_failed_count = conn->additional_failed_count;
+    out->additional_last_stage = conn->additional_last_stage;
+    out->additional_last_error = conn->additional_last_error;
+    out->additional_last_attempt_ms = conn->additional_last_attempt_ms;
 }
 
 // Reconnection support - Attempt to reconnect using stored credentials

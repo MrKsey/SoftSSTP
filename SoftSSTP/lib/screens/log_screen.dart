@@ -7,7 +7,11 @@ import 'package:provider/provider.dart';
 import '../providers/vpn_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Shows the native connection log collected by the SSTP plugin.
+/// Shows the native connection logs collected by both plugins.
+///
+/// SSTP and SoftEther each write their own log file. The screen shows both, so
+/// switching the protocol of the selected profile no longer changes which log is
+/// visible.
 class LogScreen extends StatefulWidget {
   const LogScreen({super.key});
 
@@ -16,8 +20,7 @@ class LogScreen extends StatefulWidget {
 }
 
 class _LogScreenState extends State<LogScreen> {
-  String _log = '';
-  String _path = '';
+  List<({String protocol, String path, String log})> _logs = const [];
   Timer? _timer;
 
   @override
@@ -35,12 +38,10 @@ class _LogScreenState extends State<LogScreen> {
 
   Future<void> _refresh() async {
     final vpnProvider = context.read<VpnProvider>();
-    final log = await vpnProvider.getConnectionLog();
-    final path = await vpnProvider.getConnectionLogPath();
+    final logs = await vpnProvider.getConnectionLogsByProtocol();
     if (!mounted) return;
     setState(() {
-      _log = log;
-      _path = path;
+      _logs = logs;
     });
   }
 
@@ -50,17 +51,29 @@ class _LogScreenState extends State<LogScreen> {
   }
 
   Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: _log));
+    await Clipboard.setData(ClipboardData(text: _plainText()));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Log copied to clipboard'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Log copied to clipboard')));
   }
+
+  /// The log as plain text, protocol sections included, for the clipboard.
+  String _plainText() {
+    final buffer = StringBuffer();
+    for (final entry in _logs) {
+      if (entry.log.trim().isEmpty) continue;
+      buffer.writeln('=== ${entry.protocol} log (${entry.path}) ===');
+      buffer.writeln(entry.log);
+    }
+    return buffer.toString();
+  }
+
+  bool get _hasAnyLog => _logs.any((entry) => entry.log.trim().isNotEmpty);
 
   @override
   Widget build(BuildContext context) {
+    final hasAnyLog = _hasAnyLog;
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
@@ -69,7 +82,7 @@ class _LogScreenState extends State<LogScreen> {
           IconButton(
             icon: const Icon(Icons.copy_outlined),
             tooltip: 'Copy',
-            onPressed: _log.isEmpty ? null : _copy,
+            onPressed: hasAnyLog ? _copy : null,
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
@@ -78,34 +91,15 @@ class _LogScreenState extends State<LogScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_path.isNotEmpty)
-            Container(
-              width: double.infinity,
-              color: AppTheme.cardColor,
+      body: hasAnyLog
+          ? ListView(
               padding: const EdgeInsets.all(12),
-              child: Text(
-                'File: $_path',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textSecondary,
-                ),
-              ),
-            ),
-          Expanded(
-            child: _log.isEmpty
-                ? Center(
-                    child: Text(
-                      'No log entries yet.\nConnect to a server to collect logs.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: AppTheme.textSecondary),
-                    ),
-                  )
-                : SingleChildScrollView(
-                    padding: const EdgeInsets.all(12),
-                    child: SelectableText(
-                      _log,
+              children: [
+                for (final entry in _logs)
+                  if (entry.log.trim().isNotEmpty) ...[
+                    _ProtocolHeader(protocol: entry.protocol, path: entry.path),
+                    SelectableText(
+                      entry.log,
                       style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 11,
@@ -113,8 +107,51 @@ class _LogScreenState extends State<LogScreen> {
                         color: AppTheme.textPrimary,
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                  ],
+              ],
+            )
+          : Center(
+              child: Text(
+                'No log entries yet.\nConnect to a server to collect logs.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textSecondary),
+              ),
+            ),
+    );
+  }
+}
+
+/// Section header naming the protocol whose log follows, plus its file path.
+class _ProtocolHeader extends StatelessWidget {
+  const _ProtocolHeader({required this.protocol, required this.path});
+
+  final String protocol;
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: AppTheme.cardColor,
+      padding: const EdgeInsets.all(8),
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$protocol log',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
           ),
+          if (path.isNotEmpty)
+            Text(
+              path,
+              style: TextStyle(fontSize: 10, color: AppTheme.textSecondary),
+            ),
         ],
       ),
     );

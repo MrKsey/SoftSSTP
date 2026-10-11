@@ -110,6 +110,19 @@ typedef struct {
     uint32_t len;
 } queued_frame_t;
 
+// Stage codes for softether_connection_t::additional_last_stage. Multi-connection
+// failures are diagnosed on-device through the app log (the native LOGE output
+// only reaches logcat), so the last attempt's stage is published in
+// softether_session_info_t and logged by the Kotlin side.
+#define SE_ADDL_STAGE_NONE       0  // no attempt yet / last attempt succeeded
+#define SE_ADDL_STAGE_NO_SLOT    1  // no free additional-connection slot
+#define SE_ADDL_STAGE_TCP        2  // opening the additional TCP socket
+#define SE_ADDL_STAGE_TLS        3  // TLS handshake on the additional socket
+#define SE_ADDL_STAGE_WATERMARK  4  // VPNCONNECT watermark + connect.cgi response
+#define SE_ADDL_STAGE_AUTH       5  // sending the additional_connect PACK
+#define SE_ADDL_STAGE_AUTH_RESP  6  // reading the vpn.cgi response
+#define SE_ADDL_STAGE_SERVER_ERR 7  // server answered error=<n>
+
 // Additional TCP socket for multi-connection support
 typedef struct {
     int socket_fd;
@@ -245,6 +258,10 @@ typedef struct softether_connection {
     uint32_t additional_connect_interval_ms;  // delay between additional-connect attempts (login-negotiated)
     uint64_t next_connect_time;  // monotonic timestamp for next additional connect attempt (ms)
     int additional_failed_count; // serial failure counter for additional connects
+    int additional_attempts;     // total additional-connect attempts (diagnostics)
+    int additional_last_stage;   // SE_ADDL_STAGE_* of the last attempt (diagnostics)
+    int additional_last_error;   // server "error" value of the last attempt, 0 if none
+    int additional_last_attempt_ms;  // wall-clock duration of the last attempt (ms)
     // Background additional connection thread
     pthread_t additional_thread; // background thread for non-blocking additional connect
     int additional_connecting;   // 1 if background thread is running
@@ -395,6 +412,11 @@ typedef struct {
     int server_use_encrypt;          // server-accepted session encryption flag
     int server_use_compress;         // server-accepted session compression flag
     int using_nat_t;                 // 1 = primary runs over the NAT-T transport
+    int additional_attempts;         // total additional-connect attempts
+    int additional_failed_count;     // consecutive additional-connect failures
+    int additional_last_stage;       // SE_ADDL_STAGE_* of the last attempt
+    int additional_last_error;       // server "error" of the last attempt (0 = none)
+    int additional_last_attempt_ms;  // duration of the last attempt (ms)
 } softether_session_info_t;
 
 void softether_get_session_info(softether_connection_t* conn,

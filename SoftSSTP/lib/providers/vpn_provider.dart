@@ -88,7 +88,6 @@ class VpnProvider extends ChangeNotifier {
   int _seEstablishIntervalMs = 1000;
   String _seDuplexMode = 'auto';
   bool _seEncrypt = true;
-  bool _seCompress = false;
   bool _seDisableUdpAcceleration = true;
   int _seUdpPort = 0;
   bool _seDisableQos = false;
@@ -263,7 +262,6 @@ class VpnProvider extends ChangeNotifier {
   int get seEstablishIntervalMs => _seEstablishIntervalMs;
   String get seDuplexMode => _seDuplexMode;
   bool get seEncrypt => _seEncrypt;
-  bool get seCompress => _seCompress;
   bool get seDisableUdpAcceleration => _seDisableUdpAcceleration;
   int get seUdpPort => _seUdpPort;
   bool get seDisableQos => _seDisableQos;
@@ -549,7 +547,6 @@ class VpnProvider extends ChangeNotifier {
     seEstablishIntervalMs: _seEstablishIntervalMs,
     seDuplexMode: _seDuplexMode,
     seEncrypt: _seEncrypt,
-    seCompress: _seCompress,
     seDisableUdpAcceleration: _seDisableUdpAcceleration,
     seUdpPort: _seUdpPort,
     seDisableQos: _seDisableQos,
@@ -598,7 +595,6 @@ class VpnProvider extends ChangeNotifier {
     _seEstablishIntervalMs = profile.seEstablishIntervalMs;
     _seDuplexMode = profile.seDuplexMode;
     _seEncrypt = profile.seEncrypt;
-    _seCompress = profile.seCompress;
     _seDisableUdpAcceleration = profile.seDisableUdpAcceleration;
     _seUdpPort = profile.seUdpPort;
     _seDisableQos = profile.seDisableQos;
@@ -752,7 +748,6 @@ class VpnProvider extends ChangeNotifier {
         a.seEstablishIntervalMs != b.seEstablishIntervalMs ||
         a.seDuplexMode != b.seDuplexMode ||
         a.seEncrypt != b.seEncrypt ||
-        a.seCompress != b.seCompress ||
         a.seDisableUdpAcceleration != b.seDisableUdpAcceleration ||
         a.seUdpPort != b.seUdpPort ||
         a.seDisableQos != b.seDisableQos;
@@ -1500,7 +1495,10 @@ class VpnProvider extends ChangeNotifier {
       establishIntervalMs: _seEstablishIntervalMs,
       duplexMode: _seDuplexMode,
       useEncrypt: _seEncrypt,
-      useCompress: _seCompress,
+      // "Use Data Compression" was removed from the profile: the option never
+      // worked reliably and SoftEther data is mostly incompressible, so the
+      // session always asks for compression off.
+      useCompress: false,
       disableUdpAcceleration: _seDisableUdpAcceleration,
       udpPort: _seUdpPort,
       qos: !_seDisableQos,
@@ -1838,35 +1836,32 @@ class VpnProvider extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<String> getConnectionLog() async {
+  /// Both plugins keep their own log file. Reading them separately lets the log
+  /// screen show what each protocol recorded instead of switching to whichever
+  /// protocol the selected profile happens to use.
+  Future<List<({String protocol, String path, String log})>>
+  getConnectionLogsByProtocol() async {
+    final out = <({String protocol, String path, String log})>[];
     try {
-      if (_isSoftetherTunnel) {
-        return await _softether.getConnectionLog();
-      }
-      return await _sstpFlutter.getConnectionLog();
-    } catch (e) {
-      return '';
-    }
+      final path = await _sstpFlutter.getConnectionLogPath();
+      final log = await _sstpFlutter.getConnectionLog();
+      out.add((protocol: 'SSTP', path: path, log: log));
+    } catch (_) {}
+    try {
+      final path = await _softether.getConnectionLogPath();
+      final log = await _softether.getConnectionLog();
+      out.add((protocol: 'SoftEther', path: path, log: log));
+    } catch (_) {}
+    return out;
   }
 
-  Future<String> getConnectionLogPath() async {
-    try {
-      if (_isSoftetherTunnel) {
-        return await _softether.getConnectionLogPath();
-      }
-      return await _sstpFlutter.getConnectionLogPath();
-    } catch (e) {
-      return '';
-    }
-  }
-
+  /// Clears both plugin logs: the log screen no longer selects one of them.
   Future<void> clearConnectionLog() async {
     try {
-      if (_isSoftetherTunnel) {
-        await _softether.clearConnectionLog();
-      } else {
-        await _sstpFlutter.clearConnectionLog();
-      }
+      await _sstpFlutter.clearConnectionLog();
+    } catch (_) {}
+    try {
+      await _softether.clearConnectionLog();
     } catch (_) {}
   }
 

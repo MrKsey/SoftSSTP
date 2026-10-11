@@ -390,8 +390,11 @@ JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGe
 }
 
 // Diagnostic snapshot of the negotiated session.
-// Returns long[7]: { numConnections, requestedMaxConnection, serverMaxConnection,
-//                    useSslData, serverUseEncrypt, serverUseCompress, usingNatT }
+// Returns long[12]: { numConnections, requestedMaxConnection, serverMaxConnection,
+//                     useSslData, serverUseEncrypt, serverUseCompress, usingNatT,
+//                     additionalAttempts, additionalFailedCount,
+//                     additionalLastStage, additionalLastError,
+//                     additionalLastAttemptMs }
 // or NULL when the handle is invalid.
 JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetSessionInfo(
     JNIEnv *env, jobject thiz, jlong handle) {
@@ -404,7 +407,8 @@ JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_na
     enum {
         IDX_NUM_CONNECTIONS, IDX_REQUESTED_MAX, IDX_SERVER_MAX,
         IDX_USE_SSL_DATA, IDX_SERVER_ENCRYPT, IDX_SERVER_COMPRESS,
-        IDX_USING_NAT_T, IDX_COUNT
+        IDX_USING_NAT_T, IDX_ADDL_ATTEMPTS, IDX_ADDL_FAILED,
+        IDX_ADDL_STAGE, IDX_ADDL_ERROR, IDX_ADDL_MS, IDX_COUNT
     };
 
     jlongArray arr = (*env)->NewLongArray(env, IDX_COUNT);
@@ -418,6 +422,11 @@ JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_na
     vals[IDX_SERVER_ENCRYPT] = (jlong)info.server_use_encrypt;
     vals[IDX_SERVER_COMPRESS] = (jlong)info.server_use_compress;
     vals[IDX_USING_NAT_T] = (jlong)info.using_nat_t;
+    vals[IDX_ADDL_ATTEMPTS] = (jlong)info.additional_attempts;
+    vals[IDX_ADDL_FAILED] = (jlong)info.additional_failed_count;
+    vals[IDX_ADDL_STAGE] = (jlong)info.additional_last_stage;
+    vals[IDX_ADDL_ERROR] = (jlong)info.additional_last_error;
+    vals[IDX_ADDL_MS] = (jlong)info.additional_last_attempt_ms;
 
     (*env)->SetLongArrayRegion(env, arr, 0, IDX_COUNT, vals);
     return arr;

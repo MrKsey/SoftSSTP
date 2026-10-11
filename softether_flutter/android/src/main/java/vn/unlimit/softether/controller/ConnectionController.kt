@@ -90,6 +90,10 @@ class ConnectionController(
     // Last TCP connection count written to the app log, so the periodic check
     // logs only when additional connections come up or drop.
     private var lastLoggedConnectionCount = -1
+    // Last additional-connection attempt counter written to the app log: a failed
+    // attempt keeps the connection count at 1, so the attempt counter (and its
+    // stage) is what changes while multi-connection is being retried.
+    private var lastLoggedAdditionalAttempts = -1
 
     private var currentState: ConnectionState = ConnectionState.DISCONNECTED
         set(value) {
@@ -337,11 +341,12 @@ class ConnectionController(
             "Requested: tcpConnections=${config.maxConnections} " +
                 "establishInterval=${config.establishIntervalMs}ms " +
                 "duplex=$duplexLabel sslEncrypt=${config.useEncrypt} " +
-                "compress=${config.useCompress} udpAcceleration=${!config.useUdp} " +
+                "udpAcceleration=${!config.useUdp} " +
                 "qos=${config.qos} udpPort=${config.udpPort}"
         )
-        // Fresh session: forget the previous count so the first check always logs.
+        // Fresh session: forget the previous counters so the first check always logs.
         lastLoggedConnectionCount = -1
+        lastLoggedAdditionalAttempts = -1
         currentState = ConnectionState.CONNECTING
         isCancelled.set(false)
 
@@ -454,15 +459,17 @@ class ConnectionController(
         client.setHalfConnection(!fullDuplex)
         Log.d(TAG, "Duplex mode: ${if (fullDuplex) "FULL" else "HALF"} (4x BOTH / directional split)")
         // SoftEther session options (Windows-client equivalents) from the profile.
+        // Compression is always off: the app no longer exposes it (the server-side
+        // zlib path never worked reliably and tunnel data is mostly incompressible).
         client.setSessionOptions(
             config.maxConnections,
             config.establishIntervalMs,
             config.useEncrypt,
-            config.useCompress,
+            false,
             config.qos
         )
         Log.d(TAG, "Session options: conns=${config.maxConnections} interval=${config.establishIntervalMs}ms " +
-                "encrypt=${config.useEncrypt} compress=${config.useCompress} qos=${config.qos}")
+                "encrypt=${config.useEncrypt} qos=${config.qos}")
         // Build client info (rudpPort will be filled in by native code during RUDP init)
         val clientInfo = buildClientInfo(0)
         val result = try {
@@ -1028,7 +1035,7 @@ connectInFlight.set(true)
                 config.maxConnections,
                 config.establishIntervalMs,
                 config.useEncrypt,
-                config.useCompress,
+                false,
                 config.qos
             )
 
@@ -1215,8 +1222,21 @@ connectInFlight.set(true)
     private fun logSessionInfo(force: Boolean = false) {
         if (nativeHandle == 0L) return
         val info = client.getSessionInfo() ?: return
-        if (!force && info.numConnections == lastLoggedConnectionCount) return
+        if (!force &&
+            info.numConnections == lastLoggedConnectionCount &&
+            info.additionalAttempts == lastLoggedAdditionalAttempts
+        ) return
         lastLoggedConnectionCount = info.numConnections
+        lastLoggedAdditionalAttempts = info.additionalAttempts
+        val additional = buildString {
+            append("addlAttempts=${info.additionalAttempts} ")
+            append("addlFailed=${info.additionalFailedCount} ")
+            append("addlStage=${info.additionalLastStageName} ")
+            append("addlLastMs=${info.additionalLastAttemptMs}")
+            if (info.additionalLastError != 0) {
+                append(" addlServerError=${info.additionalLastError}")
+            }
+        }
         SoftEtherLog.append(
             "SESSION",
             "Active: tcpConnections=${info.numConnections} " +
@@ -1225,7 +1245,8 @@ connectInFlight.set(true)
                 "dataChannel=${if (info.useSslData) "TLS" else "raw-TCP"} " +
                 "sslSessionEncrypt=${info.serverUseEncrypt} " +
                 "compress=${info.serverUseCompress} " +
-                "natT=${info.usingNatT}"
+                "natT=${info.usingNatT} " +
+                additional
         )
     }
 

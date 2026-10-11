@@ -173,7 +173,7 @@ class SoftEtherClient {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return null
         val arr = nativeGetSessionInfo(handle) ?: return null
-        if (arr.size < 7) return null
+        if (arr.size < 12) return null
         return SoftEtherSessionInfo(
             numConnections = arr[0].toInt(),
             requestedMaxConnections = arr[1].toInt(),
@@ -181,7 +181,12 @@ class SoftEtherClient {
             useSslData = arr[3] != 0L,
             serverUseEncrypt = arr[4] != 0L,
             serverUseCompress = arr[5] != 0L,
-            usingNatT = arr[6] != 0L
+            usingNatT = arr[6] != 0L,
+            additionalAttempts = arr[7].toInt(),
+            additionalFailedCount = arr[8].toInt(),
+            additionalLastStage = arr[9].toInt(),
+            additionalLastError = arr[10].toInt(),
+            additionalLastAttemptMs = arr[11].toInt()
         )
     }
 
@@ -341,6 +346,11 @@ data class DhcpResult(
  * @param serverUseEncrypt server-accepted session encryption flag
  * @param serverUseCompress server-accepted session compression flag
  * @param usingNatT true = primary connection runs over the NAT-T transport
+ * @param additionalAttempts total additional-connection attempts
+ * @param additionalFailedCount consecutive additional-connection failures
+ * @param additionalLastStage stage code (0..7) the last attempt reached
+ * @param additionalLastError server "error" value of the last attempt (0 = none)
+ * @param additionalLastAttemptMs wall-clock duration of the last attempt (ms)
  */
 data class SoftEtherSessionInfo(
     val numConnections: Int,
@@ -349,8 +359,31 @@ data class SoftEtherSessionInfo(
     val useSslData: Boolean,
     val serverUseEncrypt: Boolean,
     val serverUseCompress: Boolean,
-    val usingNatT: Boolean
-)
+    val usingNatT: Boolean,
+    val additionalAttempts: Int,
+    val additionalFailedCount: Int,
+    val additionalLastStage: Int,
+    val additionalLastError: Int,
+    val additionalLastAttemptMs: Int
+) {
+    /**
+     * Human-readable name of [additionalLastStage]. Mirrors the SE_ADDL_STAGE_*
+     * codes in softether_protocol.h so the app log can explain a failed
+     * multi-connection attempt without logcat.
+     */
+    val additionalLastStageName: String
+        get() = when (additionalLastStage) {
+            0 -> "none"
+            1 -> "no-slot"
+            2 -> "tcp"
+            3 -> "tls"
+            4 -> "watermark"
+            5 -> "auth"
+            6 -> "auth-resp"
+            7 -> "server-error"
+            else -> "stage$additionalLastStage"
+        }
+}
 
 /**
  * Permanent native traffic/health counters (Phase 13G).
