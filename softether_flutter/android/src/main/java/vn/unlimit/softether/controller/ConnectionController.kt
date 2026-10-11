@@ -1124,11 +1124,14 @@ connectInFlight.set(true)
                     if (silentMs >= 5000 && System.currentTimeMillis() - lastWatchdogLog >= 5000) {
                         lastWatchdogLog = System.currentTimeMillis()
                         val stats = client.getStats()
+                        val activeConns =
+                            if (nativeHandle != 0L) client.nativeGetNumConnections(nativeHandle) else -1
                         SoftEtherLog.append(
                             "DATA",
                             "No receive for ${silentMs / 1000}s " +
                                 "(tx=${stats?.txPackets ?: -1L}p rx=${stats?.rxPackets ?: -1L}p " +
-                                "rudp=${stats?.rudpRxPackets ?: -1L}p susp=${stats?.rudpDataSuspended})"
+                                "rudp=${stats?.rudpRxPackets ?: -1L}p susp=${stats?.rudpDataSuspended} " +
+                                "conns=$activeConns)"
                         )
                     }
 

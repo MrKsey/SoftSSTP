@@ -10,12 +10,24 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
 #include <pthread.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <android/log.h>
 
 #define TAG "SoftEtherCrypto"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+// Upper bounds for the TLS handshake. The handshake runs while holding
+// g_tls_use_lock, so a handshake that stalls on a silent peer freezes every
+// read/write on the primary connection (the receive path issues keepalives via
+// ssl_write under that same global lock) — which killed sessions ~35 s after
+// CONNECTED. The socket timeout makes SSL_do_handshake return on its own; the
+// wall-clock deadline bounds the retry loop even if a syscall does not honor it.
+#define HANDSHAKE_SOCKET_TIMEOUT_MS 10000
+#define HANDSHAKE_DEADLINE_MS       15000
 
 // Per-packet trace logging (Phase 13A) — compiled out unless SE_TRACE_PACKETS.
 #ifdef SE_TRACE_PACKETS
@@ -443,16 +455,41 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
     SSL_set_connect_state(ctx->ssl);
     pthread_rwlock_unlock(&g_tls_use_lock);
 
+    // Bound the handshake in the socket layer. The socket is blocking and the
+    // caller may not have set a receive timeout yet (the additional-connection
+    // path sets it only AFTER ssl_connect), so without this a silent peer leaves
+    // SSL_do_handshake waiting forever. The data phases overwrite these values.
+    {
+        struct timeval hs_tv;
+        hs_tv.tv_sec = HANDSHAKE_SOCKET_TIMEOUT_MS / 1000;
+        hs_tv.tv_usec = (HANDSHAKE_SOCKET_TIMEOUT_MS % 1000) * 1000;
+        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &hs_tv, sizeof(hs_tv));
+        setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &hs_tv, sizeof(hs_tv));
+    }
+
     // Handshake runs under the SHARED lock: it can block on network I/O for
     // seconds, but ssl_destroy must wait for it instead of freeing the SSL
     // object mid-handshake. Teardown paths force-close the fd first, so the
     // handshake exits promptly on socket error and releases the lock.
     pthread_rwlock_rdlock(&g_tls_use_lock);
 
+    // Wall-clock deadline for the whole handshake: even with the socket timeout
+    // above, the retry loop below could otherwise spin for up to
+    // max_attempts * HANDSHAKE_SOCKET_TIMEOUT_MS while holding g_tls_use_lock.
+    struct timespec hs_deadline;
+    clock_gettime(CLOCK_MONOTONIC, &hs_deadline);
+    hs_deadline.tv_sec += HANDSHAKE_DEADLINE_MS / 1000;
+    hs_deadline.tv_nsec += (long)(HANDSHAKE_DEADLINE_MS % 1000) * 1000000L;
+    if (hs_deadline.tv_nsec >= 1000000000L) {
+        hs_deadline.tv_sec += 1;
+        hs_deadline.tv_nsec -= 1000000000L;
+    }
+
     // Perform handshake with retry loop - TLS handshake often requires multiple exchanges
     int max_attempts = 100;  // Prevent infinite loop
     int attempt = 0;
     int result;
+    int handshake_timed_out = 0;
     
     while (attempt < max_attempts) {
         // The TLS handshake parses the server certificate / public key through
@@ -483,6 +520,13 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
             attempt++;
             // Small delay to avoid busy-waiting
             usleep(10000);  // 10ms
+            struct timespec now_ts;
+            clock_gettime(CLOCK_MONOTONIC, &now_ts);
+            if (now_ts.tv_sec > hs_deadline.tv_sec ||
+                (now_ts.tv_sec == hs_deadline.tv_sec && now_ts.tv_nsec >= hs_deadline.tv_nsec)) {
+                handshake_timed_out = 1;
+                break;
+            }
             continue;
         }
         
@@ -506,7 +550,12 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
     }
     
     if (result != 1) {
-        LOGE("SSL handshake did not complete after %d attempts", max_attempts);
+        if (handshake_timed_out) {
+            LOGE("SSL handshake timed out after %d ms (%d attempts)",
+                 HANDSHAKE_DEADLINE_MS, attempt);
+        } else {
+            LOGE("SSL handshake did not complete after %d attempts", max_attempts);
+        }
         pthread_rwlock_unlock(&g_tls_use_lock);
         pthread_mutex_lock(&g_openssl_lock);
         SSL_free(ctx->ssl);

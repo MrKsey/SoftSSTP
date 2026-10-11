@@ -2613,16 +2613,17 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
         conn->next_connect_time = 0;
         LOGD("Multi-connection: disabled for NAT-T transport");
     } else {
-        // Clamp max_connection to what the server accepted
-        if (conn->server_max_connection > 0 && conn->server_max_connection < (uint32_t)conn->max_connection) {
-            conn->max_connection = (int)conn->server_max_connection;
-        }
-        if (conn->max_connection > MAX_SE_CONNECTIONS) {
-            conn->max_connection = MAX_SE_CONNECTIONS;
-        }
-        conn->next_connect_time = softether_tick_ms() + ADDITIONAL_CONNECT_INTERVAL_MS;
-        LOGD("Multi-connection: max_connection=%d, server_max=%u, additional connections will open gradually",
-             conn->max_connection, conn->server_max_connection);
+        // Multi-connection is disabled. The background additional-connection
+        // handshake shares the process-wide g_tls_use_lock with the data path:
+        // when the server accepts the TCP connection but never finishes the TLS
+        // handshake (observed against VPN Gate), that handshake holds the lock
+        // and freezes every read AND write on the primary connection — the
+        // receive loop stalls inside ssl_write (keepalive), the keepalive
+        // watchdog tears the session down ~35 s after CONNECTED, and the cycle
+        // repeats. A single BOTH socket carries the tunnel reliably.
+        conn->max_connection = 1;
+        conn->next_connect_time = 0;
+        LOGD("Multi-connection: disabled (single connection)");
     }
     
     // Check for any leftover SSL data from the HTTP exchange
