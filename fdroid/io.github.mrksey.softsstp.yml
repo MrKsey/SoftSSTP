@@ -319,17 +319,73 @@ Builds:
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform=android-arm64
 
+  - versionName: 1.3.1
+    versionCode: 61
+    commit: v1.3.1
+    subdir: SoftSSTP
+    submodules: true
+    ndk: 28.2.13676358
+    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+    srclibs:
+      - flutter@stable
+    rm:
+      - SoftSSTP/ios
+      - SoftSSTP/linux
+      - SoftSSTP/macos
+      - SoftSSTP/web
+      - SoftSSTP/windows
+    prebuild:
+      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
+      - test -n "$flutterVersion"
+      - git -C $$flutter$$ checkout -f $flutterVersion
+      - export PUB_CACHE=$(pwd)/.pub-cache
+      - $$flutter$$/bin/flutter config --no-analytics
+      - $$flutter$$/bin/flutter pub get
+    scandelete:
+      - SoftSSTP/.pub-cache
+    build:
+      - export PUB_CACHE=$(pwd)/.pub-cache
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform=android-arm
+
+  - versionName: 1.3.1
+    versionCode: 62
+    commit: v1.3.1
+    subdir: SoftSSTP
+    submodules: true
+    ndk: 28.2.13676358
+    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+    srclibs:
+      - flutter@stable
+    rm:
+      - SoftSSTP/ios
+      - SoftSSTP/linux
+      - SoftSSTP/macos
+      - SoftSSTP/web
+      - SoftSSTP/windows
+    prebuild:
+      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
+      - test -n "$flutterVersion"
+      - git -C $$flutter$$ checkout -f $flutterVersion
+      - export PUB_CACHE=$(pwd)/.pub-cache
+      - $$flutter$$/bin/flutter config --no-analytics
+      - $$flutter$$/bin/flutter pub get
+    scandelete:
+      - SoftSSTP/.pub-cache
+    build:
+      - export PUB_CACHE=$(pwd)/.pub-cache
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform=android-arm64
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-# The version code and name live in SoftSSTP/pubspec.yaml, e.g. "1.3.0+5".
+# The version code and name live in SoftSSTP/pubspec.yaml, e.g. "1.3.1+6".
 UpdateCheckData: SoftSSTP/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
 # Each ABI gets versionCode * 10 + slot (arm = 1, arm64 = 2). The same slot
 # numbers are set in SoftSSTP/android/app/build.gradle.kts.
 VercodeOperation:
   - '%c * 10 + 1'
   - '%c * 10 + 2'
-CurrentVersion: '1.3.0'
-CurrentVersionCode: 52
+CurrentVersion: '1.3.1'
+CurrentVersionCode: 62
 
 MaintainerNotes: |
   Version name and code come from SoftSSTP/pubspec.yaml (the number after "+").
