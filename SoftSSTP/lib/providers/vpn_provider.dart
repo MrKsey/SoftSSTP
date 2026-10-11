@@ -838,6 +838,10 @@ class VpnProvider extends ChangeNotifier {
     _appBasedEnabled = prefs.getBool('vpn_app_based_enabled') ?? false;
     _allowedApps = prefs.getStringList('vpn_allowed_apps') ?? [];
 
+    // Propagate the persisted logging preference to both native plugins so logs
+    // are collected even before this session's first connect.
+    unawaited(_applyConnectionLogging());
+
     // Saved app selections shared by all profiles.
     final rawPresets = prefs.getString('vpn_app_presets');
     if (rawPresets != null && rawPresets.isNotEmpty) {
@@ -1432,6 +1436,8 @@ class VpnProvider extends ChangeNotifier {
       addDefaultRoute: _addDefaultRoute,
       allowedApps: allowedApps,
     );
+    // Make sure the native side knows whether to persist the log.
+    await _softether.setConnectionLogging(enabled: _connectionLogEnabled);
     await _softether.connect(server: server);
   }
 
@@ -1749,14 +1755,25 @@ class VpnProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _connectionLogEnabled = enabled;
     await prefs.setBool('vpn_connection_log', enabled);
-    try {
-      await _sstpFlutter.setConnectionLogging(enabled: enabled);
-    } catch (_) {}
+    await _applyConnectionLogging();
     notifyListeners();
+  }
+
+  /// Pushes the current logging preference to both native plugins.
+  Future<void> _applyConnectionLogging() async {
+    try {
+      await _sstpFlutter.setConnectionLogging(enabled: _connectionLogEnabled);
+    } catch (_) {}
+    try {
+      await _softether.setConnectionLogging(enabled: _connectionLogEnabled);
+    } catch (_) {}
   }
 
   Future<String> getConnectionLog() async {
     try {
+      if (_isSoftetherActive) {
+        return await _softether.getConnectionLog();
+      }
       return await _sstpFlutter.getConnectionLog();
     } catch (e) {
       return '';
@@ -1765,6 +1782,9 @@ class VpnProvider extends ChangeNotifier {
 
   Future<String> getConnectionLogPath() async {
     try {
+      if (_isSoftetherActive) {
+        return await _softether.getConnectionLogPath();
+      }
       return await _sstpFlutter.getConnectionLogPath();
     } catch (e) {
       return '';
@@ -1773,7 +1793,11 @@ class VpnProvider extends ChangeNotifier {
 
   Future<void> clearConnectionLog() async {
     try {
-      await _sstpFlutter.clearConnectionLog();
+      if (_isSoftetherActive) {
+        await _softether.clearConnectionLog();
+      } else {
+        await _sstpFlutter.clearConnectionLog();
+      }
     } catch (_) {}
   }
 

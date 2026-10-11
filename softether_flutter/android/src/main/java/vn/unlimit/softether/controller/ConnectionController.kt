@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import vn.unlimit.softether.SoftEtherVpnService
+import vn.unlimit.softether.SoftEtherLog
 import vn.unlimit.softether.SoftEtherTrafficSnapshot
 import vn.unlimit.softether.client.SoftEtherClient
 import vn.unlimit.softether.client.protocol.KeepAliveManager
@@ -80,6 +81,11 @@ class ConnectionController(
     private var lastPublishedAtMs = 0L
 
     private var isNetworkAvailable = true
+
+    // Wall-clock of the last return from the native receive loop. The watchdog
+    // logs (and the UI can show) how long the data path has been silent, which
+    // distinguishes "no traffic" from a blocked native receive.
+    private val lastReceiveActivityMs = AtomicLong(System.currentTimeMillis())
     
     private var currentState: ConnectionState = ConnectionState.DISCONNECTED
         set(value) {
@@ -262,8 +268,13 @@ class ConnectionController(
         runCatching {
             val mac = parseClientMac(config.clientMac) ?: deriveClientMac()
             client.setClientMac(nativeHandle, mac)
-            Log.d(TAG, "Client MAC: ${mac.joinToString(":") { String.format("%02X", it) }}")
-        }.onFailure { Log.w(TAG, "Failed to set client MAC", it) }
+            val formatted = mac.joinToString(":") { String.format("%02X", it) }
+            Log.d(TAG, "Client MAC: $formatted")
+            SoftEtherLog.append("MAC", "Client MAC: $formatted (${if (parseClientMac(config.clientMac) != null) "profile" else "derived"})")
+        }.onFailure {
+            Log.w(TAG, "Failed to set client MAC", it)
+            SoftEtherLog.append("MAC", "Failed to set client MAC: ${it.message}")
+        }
     }
 
     /** Stable locally-administered unicast MAC derived from the server identity. */
@@ -304,6 +315,11 @@ class ConnectionController(
      */
     private suspend fun performConnect() {
         Log.d(TAG, "Starting connection to ${config.serverHost}:${config.serverPort}")
+        SoftEtherLog.startSession(
+            "server=${config.serverHost}:${config.serverPort} hub=${config.virtualHub} " +
+                "user=${config.username} tcp=${config.useTcp} udp=${config.useUdp} " +
+                "clientMac=${config.clientMac.ifBlank { "<derived>" }}"
+        )
         currentState = ConnectionState.CONNECTING
         isCancelled.set(false)
 
@@ -395,6 +411,7 @@ class ConnectionController(
         // Use virtualHub from config, default to "VPN" if not set
         val hubName = config.virtualHub.ifEmpty { "VPN" }
         Log.d(TAG, "Connecting with hub: $hubName")
+        SoftEtherLog.append("PHASE", "Connecting (TLS/handshake/auth) to hub '$hubName'…")
         if (config.authMethod != vn.unlimit.softether.model.AuthMethod.AUTO) {
             val authTypeInt = when (config.authMethod) {
                 vn.unlimit.softether.model.AuthMethod.ANONYMOUS -> 0
@@ -446,7 +463,9 @@ class ConnectionController(
 
         if (result != 0) {
             currentState = ConnectionState.ERROR
-            throw Exception("Connection failed: ${SoftEtherError.getErrorString(result)} ($result)")
+            val detail = "Connection failed: ${SoftEtherError.getErrorString(result)} ($result)"
+            SoftEtherLog.append("ERROR", detail)
+            throw Exception(detail)
         }
 
         // Connection established at protocol level — run DHCP before announcing CONNECTED
@@ -458,6 +477,7 @@ class ConnectionController(
         // Set external handle so send/receive work through ConnectionController
         client.externalHandle = nativeHandle
         Log.d(TAG, "VPN connection established successfully")
+        SoftEtherLog.append("PHASE", "Session established (auth OK)")
 
         // Check if cancelled before establishing VPN interface
         if (isCancelled.get()) {
@@ -500,6 +520,7 @@ class ConnectionController(
 
         // Perform DHCP over the SoftEther tunnel to get IP configuration
         Log.d(TAG, "Starting DHCP over SoftEther tunnel...")
+        SoftEtherLog.append("DHCP", "Requesting lease over the tunnel…")
         val dhcpResult = client.doDhcp(nativeHandle)
 
         // Re-check after DHCP: if the user cancelled while doDhcp() was
@@ -514,6 +535,11 @@ class ConnectionController(
         if (dhcpResult != null) {
             Log.d(TAG, "DHCP success: IP=${dhcpResult.assignedIp}/${dhcpResult.prefixLength} " +
                     "GW=${dhcpResult.gateway} DNS=${dhcpResult.dnsServer} DNS2=${dhcpResult.dnsServer2}")
+            SoftEtherLog.append(
+                "DHCP",
+                "Lease: IP=${dhcpResult.assignedIp}/${dhcpResult.prefixLength} " +
+                    "GW=${dhcpResult.gateway} DNS=${dhcpResult.dnsServer} DNS2=${dhcpResult.dnsServer2}"
+            )
             assignedLocalIp = dhcpResult.assignedIp
             // Update config with DHCP-assigned values
             dhcpConfig = config.copy(
@@ -526,6 +552,7 @@ class ConnectionController(
                 ?: throw Exception("Failed to establish VPN interface")
         } else {
             Log.w(TAG, "DHCP failed, falling back to hardcoded IP config")
+            SoftEtherLog.append("DHCP", "No lease received — falling back to static config ${config.localAddress}")
             assignedLocalIp = config.localAddress
             vpnInterface = service.establishVpnInterface(config)
                 ?: throw Exception("Failed to establish VPN interface")
@@ -534,6 +561,7 @@ class ConnectionController(
         // Now that we have an IP and VPN interface, transition to CONNECTED
         currentState = ConnectionState.CONNECTED
         resetTrafficPublishing(publishSnapshot = true)
+        SoftEtherLog.append("PHASE", "Connected — data path started (assigned IP $assignedLocalIp)")
 
         // Start data forwarding loops
         startDataForwarding()
@@ -750,11 +778,13 @@ class ConnectionController(
                         maybePublishTrafficSnapshot()
                     } else if (result < 0 && isConnected() && !isCancelled.get()) {
                         Log.w(TAG, "Send failed: $result")
+                        SoftEtherLog.append("ERROR", "Send to tunnel failed: native=$result")
                         scope.launch { attemptReconnect() }
                     }
                 } catch (e: Exception) {
                     if (!isCancelled.get()) {
                         Log.e(TAG, "Send error", e)
+                        SoftEtherLog.append("ERROR", "Send exception: ${e.message}")
                         if (isConnected()) {
                             scope.launch { attemptReconnect() }
                         }
@@ -797,6 +827,13 @@ class ConnectionController(
                                 packetsReceived.addAndGet(written.toLong())
                                 maybePublishTrafficSnapshot()
                             }
+                            // Inbound data also proves the link is alive. Without
+                            // this the keepalive watchdog only sees "activity" on
+                            // idle ticks (total == 0) and falsely declares the
+                            // connection dead while traffic is flowing, tearing
+                            // down a healthy session every ~33 s.
+                            lastReceiveActivityMs.set(System.currentTimeMillis())
+                            keepAliveManager.recordReceived()
                             // Periodically protect additional sockets (multi-connection)
                             receiveCount++
                             if (receiveCount % 50 == 0) {
@@ -808,11 +845,13 @@ class ConnectionController(
                             // delay — native receive blocks up to 100ms in
                             // poll() when idle, so this loop only wakes ~10x/s
                             // at idle and instantly when data arrives.
+                            lastReceiveActivityMs.set(System.currentTimeMillis())
                             keepAliveManager.recordReceived()
                         }
                         else -> {
                             // Error receiving
                             Log.e(TAG, "Receive error: $total")
+                            SoftEtherLog.append("ERROR", "Receive loop error: native=$total")
                             if (isConnected() && !isCancelled.get()) {
                                 scope.launch { attemptReconnect() }
                             }
@@ -823,6 +862,7 @@ class ConnectionController(
                     break
                 } catch (e: Exception) {
                     Log.e(TAG, "Receive loop error", e)
+                    SoftEtherLog.append("ERROR", "Receive loop exception: ${e.message}")
                     if (isConnected() && !isCancelled.get()) {
                         scope.launch { attemptReconnect() }
                     }
@@ -848,6 +888,7 @@ class ConnectionController(
         try {
             if (reconnectAttempts.incrementAndGet() >= MAX_RECONNECT_ATTEMPTS) {
                 Log.e(TAG, "Max reconnection attempts reached")
+                SoftEtherLog.append("ERROR", "Max reconnection attempts reached — giving up")
                 // Surface as ERROR (not silent DISCONNECTED) so the UI shows the
                 // disconnect-by-error notification and STATE_ERROR broadcast.
                 currentState = ConnectionState.ERROR
@@ -857,6 +898,7 @@ class ConnectionController(
             }
 
             Log.w(TAG, "Attempting automatic reconnection (${reconnectAttempts.get()}/$MAX_RECONNECT_ATTEMPTS)")
+            SoftEtherLog.append("RECONNECT", "Attempt ${reconnectAttempts.get()}/$MAX_RECONNECT_ATTEMPTS")
 
             // Reset isCancelled so loops and subsequent operations can proceed
             isCancelled.set(false)
@@ -1065,6 +1107,7 @@ connectInFlight.set(true)
         keepAliveManager.start()
 
         scope.launch {
+            var lastWatchdogLog = 0L
             while (isConnected() && !isCancelled.get()) {
                 try {
                     delay(1000) // Check every second
@@ -1074,8 +1117,27 @@ connectInFlight.set(true)
                         keepAliveManager.recordSent()
                     }
 
+                    // Diagnose a silent data path: the native receive loop returns
+                    // at least every ~100 ms while it runs, so a gap means either
+                    // no traffic or a blocked native read.
+                    val silentMs = System.currentTimeMillis() - lastReceiveActivityMs.get()
+                    if (silentMs >= 5000 && System.currentTimeMillis() - lastWatchdogLog >= 5000) {
+                        lastWatchdogLog = System.currentTimeMillis()
+                        val stats = client.getStats()
+                        SoftEtherLog.append(
+                            "DATA",
+                            "No receive for ${silentMs / 1000}s " +
+                                "(tx=${stats?.txPackets ?: -1L}p rx=${stats?.rxPackets ?: -1L}p " +
+                                "rudp=${stats?.rudpRxPackets ?: -1L}p susp=${stats?.rudpDataSuspended})"
+                        )
+                    }
+
                     if (keepAliveManager.isConnectionDead()) {
                         Log.e(TAG, "Connection appears dead (keepalive timeout)")
+                        SoftEtherLog.append(
+                            "ERROR",
+                            "Keepalive timeout: no inbound data for ${silentMs / 1000}s — reconnecting"
+                        )
                         scope.launch { attemptReconnect() }
                         break
                     }

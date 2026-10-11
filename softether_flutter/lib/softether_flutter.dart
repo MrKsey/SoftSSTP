@@ -256,6 +256,29 @@ class SoftetherFlutter {
     return [(result[0] as num).toInt(), (result[1] as num).toInt()];
   }
 
+  /// Enables or disables collection of the native connection log.
+  Future<void> setConnectionLogging({required bool enabled}) async {
+    await _command
+        .invokeMethod<bool>('setConnectionLogging', {'enabled': enabled});
+  }
+
+  /// Returns the collected native connection log (empty when disabled).
+  Future<String> getConnectionLog() async {
+    final log = await _command.invokeMethod<String>('getConnectionLog');
+    return log ?? '';
+  }
+
+  /// Absolute path of the on-disk connection log file.
+  Future<String> getConnectionLogPath() async {
+    final path = await _command.invokeMethod<String>('getConnectionLogPath');
+    return path ?? '';
+  }
+
+  /// Clears the in-memory buffer and the on-disk log file.
+  Future<void> clearConnectionLog() async {
+    await _command.invokeMethod<bool>('clearConnectionLog');
+  }
+
   static final SoftetherFlutter _instance = SoftetherFlutter._internal();
   factory SoftetherFlutter() => _instance;
   SoftetherFlutter._internal();

@@ -11,6 +11,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.PluginRegistry
+import vn.unlimit.softether.SoftEtherLog
 import vn.unlimit.softether.SoftEtherTrafficSnapshot
 import vn.unlimit.softether.SoftEtherVpnService
 import vn.unlimit.softether.model.AuthMethod
@@ -66,6 +67,7 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
+        SoftEtherLog.init(context)
         commandChannel = MethodChannel(binding.binaryMessenger, "softether_flutter")
         commandChannel.setMethodCallHandler(this)
         eventChannel = MethodChannel(binding.binaryMessenger, "softether_receiver")
@@ -116,6 +118,20 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             "getTrafficTotals" -> {
                 val snapshot = SoftEtherVpnService.lastTrafficSnapshot
                 result.success(listOf(snapshot.inBytes * 8L, snapshot.outBytes * 8L))
+            }
+            "setConnectionLogging" -> {
+                SoftEtherLog.enabled = call.argument<Boolean>("enabled") ?: false
+                SoftEtherLog.append(
+                    "SERVICE",
+                    if (SoftEtherLog.enabled) "Connection logging enabled" else "Connection logging disabled"
+                )
+                result.success(true)
+            }
+            "getConnectionLog" -> result.success(SoftEtherLog.read())
+            "getConnectionLogPath" -> result.success(SoftEtherLog.filePath())
+            "clearConnectionLog" -> {
+                SoftEtherLog.clear()
+                result.success(true)
             }
             else -> result.notImplemented()
         }

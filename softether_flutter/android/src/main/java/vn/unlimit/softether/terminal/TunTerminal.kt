@@ -4,6 +4,7 @@ import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.coroutines.*
+import vn.unlimit.softether.SoftEtherLog
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -51,6 +52,7 @@ class TunTerminal(
         }
 
         Log.d(TAG, "TUN terminal started")
+        SoftEtherLog.append("TUN", "TUN read loop started")
     }
 
     /**
@@ -125,6 +127,7 @@ class TunTerminal(
                     length < 0 -> {
                         // EOF - connection closed
                         Log.d(TAG, "TUN interface closed")
+                        SoftEtherLog.append("TUN", "TUN interface closed (EOF)")
                         break
                     }
                 }
@@ -136,6 +139,7 @@ class TunTerminal(
                         Log.d(TAG, "TUN interface closed (EBADF), stopping read loop")
                     } else {
                         Log.e(TAG, "Error reading from TUN", e)
+                        SoftEtherLog.append("ERROR", "TUN read error: ${e.message}")
                         onError?.invoke(e)
                     }
                 }

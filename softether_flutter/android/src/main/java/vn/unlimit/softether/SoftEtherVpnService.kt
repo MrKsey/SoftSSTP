@@ -163,6 +163,8 @@ class SoftEtherVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service created")
+        SoftEtherLog.init(this)
+        SoftEtherLog.append("SERVICE", "Service created")
         createNotificationChannel()
         registerNetworkReceiver()
     }
@@ -313,6 +315,10 @@ class SoftEtherVpnService : VpnService() {
         }
 
         Log.d(TAG, "Starting VPN with config: ${config.serverHost}:${config.serverPort}")
+        SoftEtherLog.append(
+            "SERVICE",
+            "Connect requested: ${config.serverHost}:${config.serverPort} hub=${config.virtualHub} user=${config.username}"
+        )
         lastTrafficSnapshot = SoftEtherTrafficSnapshot.EMPTY
         notifyTrafficListeners(SoftEtherTrafficSnapshot.EMPTY)
 
@@ -712,7 +718,14 @@ class SoftEtherVpnService : VpnService() {
 
     private var pendingStateRunnable: Runnable? = null
 
+    @Volatile
+    private var lastLoggedState: ConnectionState? = null
+
     private fun handleConnectionState(state: ConnectionState, hostname: String) {
+        if (state != lastLoggedState) {
+            lastLoggedState = state
+            SoftEtherLog.append("STATE", state.name)
+        }
         // During user-initiated stopVpn() we already sent STATE_DISCONNECTED to listeners,
         // removed the foreground notification, and launched IO cleanup.
         // Do NOT touch the notification here — the controller's disconnect() fires
