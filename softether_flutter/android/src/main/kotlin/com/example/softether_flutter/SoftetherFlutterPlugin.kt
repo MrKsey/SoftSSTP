@@ -168,6 +168,14 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
         val username = call.argument<String>("username") ?: ""
         val addDefaultRoute = call.argument<Boolean>("addDefaultRoute") ?: true
         val routes = if (addDefaultRoute) listOf(Route("0.0.0.0", 0)) else emptyList()
+        // SoftEther session options (Windows-client equivalents).
+        val disableUdp = call.argument<Boolean>("disableUdpAcceleration") ?: true
+        val duplexMode = call.argument<String>("duplexMode") ?: "auto"
+        val fullDuplex = when (duplexMode) {
+            "half" -> false
+            "full" -> true
+            else -> null
+        }
         return ConnectionConfig(
             serverHost = call.argument<String>("host") ?: "",
             serverPort = call.argument<Int>("port") ?: 443,
@@ -182,10 +190,17 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             excludedApps = call.argument<ArrayList<String>>("excludedApps") ?: emptyList(),
             allowedApps = call.argument<ArrayList<String>>("allowedApps") ?: emptyList(),
             useTcp = true,
-            useUdp = false,
+            useUdp = !disableUdp,
+            udpPort = call.argument<Int>("udpPort") ?: 0,
             connectTimeoutMs = call.argument<Int>("connectTimeoutMs") ?: 30000,
             authMethod = if (username.isEmpty()) AuthMethod.ANONYMOUS else AuthMethod.AUTO,
             clientMac = call.argument<String>("clientMac") ?: "",
+            maxConnections = call.argument<Int>("maxConnections") ?: 4,
+            establishIntervalMs = call.argument<Int>("establishIntervalMs") ?: 1000,
+            useEncrypt = call.argument<Boolean>("useEncrypt") ?: true,
+            useCompress = call.argument<Boolean>("useCompress") ?: false,
+            qos = call.argument<Boolean>("qos") ?: true,
+            fullDuplex = fullDuplex,
         )
     }
 

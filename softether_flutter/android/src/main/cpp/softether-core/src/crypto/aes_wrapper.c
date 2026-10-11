@@ -14,6 +14,8 @@
 #include <pthread.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <android/log.h>
 
 #define TAG "SoftEtherCrypto"
@@ -455,10 +457,13 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
     SSL_set_connect_state(ctx->ssl);
     pthread_rwlock_unlock(&g_tls_use_lock);
 
-    // Bound the handshake in the socket layer. The socket is blocking and the
-    // caller may not have set a receive timeout yet (the additional-connection
-    // path sets it only AFTER ssl_connect), so without this a silent peer leaves
-    // SSL_do_handshake waiting forever. The data phases overwrite these values.
+    // Keep a socket-level timeout too (the data phase overwrites it), but drive
+    // the handshake itself in NON-BLOCKING mode: the blocking TLS I/O must happen
+    // OUTSIDE g_tls_use_lock / g_openssl_lock. Otherwise a stalled handshake
+    // (e.g. the background additional-connection handshake against a peer that
+    // accepts TCP but never answers TLS) holds the global lock for the whole
+    // socket timeout and freezes every send on the primary connection — that is
+    // what killed sessions ~35 s after CONNECTED.
     {
         struct timeval hs_tv;
         hs_tv.tv_sec = HANDSHAKE_SOCKET_TIMEOUT_MS / 1000;
@@ -467,15 +472,12 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
         setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &hs_tv, sizeof(hs_tv));
     }
 
-    // Handshake runs under the SHARED lock: it can block on network I/O for
-    // seconds, but ssl_destroy must wait for it instead of freeing the SSL
-    // object mid-handshake. Teardown paths force-close the fd first, so the
-    // handshake exits promptly on socket error and releases the lock.
-    pthread_rwlock_rdlock(&g_tls_use_lock);
+    int orig_flags = fcntl(socket_fd, F_GETFL, 0);
+    if (orig_flags >= 0) {
+        fcntl(socket_fd, F_SETFL, orig_flags | O_NONBLOCK);
+    }
 
-    // Wall-clock deadline for the whole handshake: even with the socket timeout
-    // above, the retry loop below could otherwise spin for up to
-    // max_attempts * HANDSHAKE_SOCKET_TIMEOUT_MS while holding g_tls_use_lock.
+    // Wall-clock deadline for the whole handshake.
     struct timespec hs_deadline;
     clock_gettime(CLOCK_MONOTONIC, &hs_deadline);
     hs_deadline.tv_sec += HANDSHAKE_DEADLINE_MS / 1000;
@@ -485,48 +487,59 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
         hs_deadline.tv_nsec -= 1000000000L;
     }
 
-    // Perform handshake with retry loop - TLS handshake often requires multiple exchanges
-    int max_attempts = 100;  // Prevent infinite loop
+    // Drive the handshake step by step. Each SSL_do_handshake runs under the
+    // SHARED lifetime lock (so ssl_destroy cannot free the SSL mid-step) and the
+    // OpenSSL provider lock (the handshake parses the server certificate through
+    // the global ASN.1/decoder registries). Both are released before the poll()
+    // below, so the network wait never blocks the data path.
+    int max_attempts = 1000;  // Safety net; the wall-clock deadline is the real bound
     int attempt = 0;
-    int result;
+    int result = -1;
     int handshake_timed_out = 0;
-    
+
     while (attempt < max_attempts) {
         // The TLS handshake parses the server certificate / public key through
         // OpenSSL's ASN.1 decoder + provider/namemap machinery (OSSL_DECODER,
         // DER2KEY, ERR_pop_to_mark). These mutate GLOBAL OpenSSL provider and
-        // decoder registries shared by every thread. The per-SSL g_tls_use_lock
-        // above only protects this SSL object, NOT those globals, so run the
-        // handshake under g_openssl_lock to make it mutually exclusive with the
-        // data path's digest/RAND/SHA calls and with other concurrent
-        // handshakes. A concurrent unmarshalled provider fetch here corrupts
-        // the shared decoder registry (scudo header corruption in
-        // ERR_pop_to_mark / der2key_decode) — see the production crash whose
-        // backtrace is OSSL_DECODER_from_data -> der2key_decode.
+        // decoder registries shared by every thread, so the step runs under
+        // g_openssl_lock to make it mutually exclusive with the data path's
+        // digest/RAND/SHA calls and with other concurrent handshakes. The
+        // lifetime lock is taken SHARED so ssl_destroy cannot free this SSL while
+        // the step runs. Both are released before the poll() below — the actual
+        // network wait must never hold them, or a slow handshake would freeze
+        // every send on the primary connection.
+        pthread_rwlock_rdlock(&g_tls_use_lock);
         pthread_mutex_lock(&g_openssl_lock);
         result = SSL_do_handshake(ctx->ssl);
+        // SSL_get_error inspects the SSL state set by the step above, so read it
+        // while the SSL object is still pinned by the lifetime lock.
+        int ssl_error = (result == 1) ? 0 : SSL_get_error(ctx->ssl, result);
         pthread_mutex_unlock(&g_openssl_lock);
+        pthread_rwlock_unlock(&g_tls_use_lock);
 
         if (result == 1) {
             // Handshake successful
             break;
         }
-        
-        int ssl_error = SSL_get_error(ctx->ssl, result);
-        
+
         if (ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE) {
-            // Handshake needs more data - continue
-            LOGD("SSL handshake attempt %d: need more data (error=%d)", attempt + 1, ssl_error);
             attempt++;
-            // Small delay to avoid busy-waiting
-            usleep(10000);  // 10ms
             struct timespec now_ts;
             clock_gettime(CLOCK_MONOTONIC, &now_ts);
-            if (now_ts.tv_sec > hs_deadline.tv_sec ||
-                (now_ts.tv_sec == hs_deadline.tv_sec && now_ts.tv_nsec >= hs_deadline.tv_nsec)) {
+            long remaining_ms =
+                (long)(hs_deadline.tv_sec - now_ts.tv_sec) * 1000L +
+                (long)(hs_deadline.tv_nsec - now_ts.tv_nsec) / 1000000L;
+            if (remaining_ms <= 0) {
                 handshake_timed_out = 1;
                 break;
             }
+            // Wait for the socket WITHOUT holding any lock: sends on other links
+            // (and on this link once it is up) are never blocked here.
+            struct pollfd pfd;
+            pfd.fd = socket_fd;
+            pfd.events = (ssl_error == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+            pfd.revents = 0;
+            poll(&pfd, 1, (int)remaining_ms);
             continue;
         }
         
@@ -541,14 +554,19 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
             LOGE("SSL handshake failed: error=%d detail=%lu (%s)", ssl_error, err_detail,
                  err_detail ? ERR_error_string(err_detail, NULL) : "none");
         }
-        pthread_rwlock_unlock(&g_tls_use_lock);
+        if (orig_flags >= 0) fcntl(socket_fd, F_SETFL, orig_flags);
         pthread_mutex_lock(&g_openssl_lock);
         SSL_free(ctx->ssl);
         pthread_mutex_unlock(&g_openssl_lock);
         ctx->ssl = NULL;
         return -1;
     }
-    
+
+    // Restore the caller's socket mode before returning in every case.
+    if (orig_flags >= 0) {
+        fcntl(socket_fd, F_SETFL, orig_flags);
+    }
+
     if (result != 1) {
         if (handshake_timed_out) {
             LOGE("SSL handshake timed out after %d ms (%d attempts)",
@@ -556,7 +574,6 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
         } else {
             LOGE("SSL handshake did not complete after %d attempts", max_attempts);
         }
-        pthread_rwlock_unlock(&g_tls_use_lock);
         pthread_mutex_lock(&g_openssl_lock);
         SSL_free(ctx->ssl);
         pthread_mutex_unlock(&g_openssl_lock);
@@ -577,7 +594,6 @@ int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname) {
     SSL_set_mode(ctx->ssl, SSL_MODE_AUTO_RETRY);
     SSL_set_mode(ctx->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
-    pthread_rwlock_unlock(&g_tls_use_lock);
     return 0;
 }
 

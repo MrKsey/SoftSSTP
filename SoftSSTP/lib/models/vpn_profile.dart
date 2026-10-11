@@ -52,7 +52,7 @@ class VpnProfile {
   String protocol;
 
   /// SoftEther virtual hub to join. Ignored for SSTP. VPN Gate public servers
-  /// use "VPN"; a hand-made profile targets the server default hub "DEFAULT".
+  /// use "VPNGATE"; a hand-made profile targets the server default hub "DEFAULT".
   String hubName;
 
   /// Optional SoftEther client MAC ("AA:BB:CC:DD:EE:FF"). Ignored for SSTP.
@@ -105,6 +105,31 @@ class VpnProfile {
   bool useCustomSni;
   String customSni;
 
+  // SoftEther session options (Windows-client equivalents). Ignored for SSTP.
+  /// Number of TCP connections (1-8).
+  int seTcpConnections;
+
+  /// Delay between additional-connection attempts, in milliseconds.
+  int seEstablishIntervalMs;
+
+  /// Duplex mode: "auto", "half" or "full".
+  String seDuplexMode;
+
+  /// "Encrypt VPN Session with SSL".
+  bool seEncrypt;
+
+  /// "Use Data Compression".
+  bool seCompress;
+
+  /// "Disable UDP Acceleration".
+  bool seDisableUdpAcceleration;
+
+  /// Server UDP port for UDP acceleration, 0 when unknown.
+  int seUdpPort;
+
+  /// "Disable VoIP / QoS Functions" (false keeps QoS enabled).
+  bool seDisableQos;
+
   VpnProfile({
     required this.id,
     this.name = '',
@@ -143,6 +168,14 @@ class VpnProfile {
     this.sslVersion = 'AUTO',
     this.useCustomSni = false,
     this.customSni = '',
+    this.seTcpConnections = 4,
+    this.seEstablishIntervalMs = 1000,
+    this.seDuplexMode = 'auto',
+    this.seEncrypt = true,
+    this.seCompress = false,
+    this.seDisableUdpAcceleration = true,
+    this.seUdpPort = 0,
+    this.seDisableQos = false,
   }) : allowedApps = List<String>.from(allowedApps ?? const []);
 
   /// Name shown in the UI. Falls back to the server host (or its IP) when the
@@ -199,6 +232,14 @@ class VpnProfile {
     sslVersion: sslVersion,
     useCustomSni: useCustomSni,
     customSni: customSni,
+    seTcpConnections: seTcpConnections,
+    seEstablishIntervalMs: seEstablishIntervalMs,
+    seDuplexMode: seDuplexMode,
+    seEncrypt: seEncrypt,
+    seCompress: seCompress,
+    seDisableUdpAcceleration: seDisableUdpAcceleration,
+    seUdpPort: seUdpPort,
+    seDisableQos: seDisableQos,
   );
 
   Map<String, dynamic> toJson() => {
@@ -239,6 +280,14 @@ class VpnProfile {
     'sslVersion': sslVersion,
     'useCustomSni': useCustomSni,
     'customSni': customSni,
+    'seTcpConnections': seTcpConnections,
+    'seEstablishIntervalMs': seEstablishIntervalMs,
+    'seDuplexMode': seDuplexMode,
+    'seEncrypt': seEncrypt,
+    'seCompress': seCompress,
+    'seDisableUdpAcceleration': seDisableUdpAcceleration,
+    'seUdpPort': seUdpPort,
+    'seDisableQos': seDisableQos,
   };
 
   factory VpnProfile.fromJson(Map<String, dynamic> json) {
@@ -283,6 +332,16 @@ class VpnProfile {
       sslVersion: (json['sslVersion'] ?? 'AUTO') as String,
       useCustomSni: (json['useCustomSni'] as bool?) ?? false,
       customSni: (json['customSni'] ?? '') as String,
+      seTcpConnections: (json['seTcpConnections'] as num?)?.toInt() ?? 4,
+      seEstablishIntervalMs:
+          (json['seEstablishIntervalMs'] as num?)?.toInt() ?? 1000,
+      seDuplexMode: (json['seDuplexMode'] ?? 'auto') as String,
+      seEncrypt: (json['seEncrypt'] as bool?) ?? true,
+      seCompress: (json['seCompress'] as bool?) ?? false,
+      seDisableUdpAcceleration:
+          (json['seDisableUdpAcceleration'] as bool?) ?? true,
+      seUdpPort: (json['seUdpPort'] as num?)?.toInt() ?? 0,
+      seDisableQos: (json['seDisableQos'] as bool?) ?? false,
     );
   }
 }

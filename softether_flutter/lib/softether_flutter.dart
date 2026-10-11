@@ -21,7 +21,7 @@ class SoftetherServer {
   final String username;
   final String password;
 
-  /// Virtual hub to join. VPN Gate public servers use "VPN".
+  /// Virtual hub to join. VPN Gate public servers use "VPNGATE".
   final String hub;
 
   /// Optional client MAC address ("AA:BB:CC:DD:EE:FF"). When empty the native
@@ -48,12 +48,39 @@ class SoftetherServer {
 
   final int connectTimeoutMs;
 
+  /// Number of TCP connections (1-8). Mirrors the Windows client's
+  /// "Number of TCP Connections".
+  final int maxConnections;
+
+  /// Delay between additional-connection attempts, in milliseconds. Mirrors the
+  /// Windows client's "Additional Connection Establishing Interval".
+  final int establishIntervalMs;
+
+  /// Duplex mode: "auto" (pick by device tier), "half" or "full".
+  final String duplexMode;
+
+  /// Request SSL encryption of the session data ("Encrypt VPN Session with SSL").
+  final bool useEncrypt;
+
+  /// Request data compression ("Use Data Compression").
+  final bool useCompress;
+
+  /// Disable UDP acceleration ("Disable UDP Acceleration"). When false the
+  /// native side may try the direct R-UDP stage if a [udpPort] is known.
+  final bool disableUdpAcceleration;
+
+  /// Server UDP port (seUdpPort) for UDP acceleration, 0 when unknown.
+  final int udpPort;
+
+  /// Keep VoIP / QoS functions ("Disable VoIP / QoS Functions" unchecked).
+  final bool qos;
+
   const SoftetherServer({
     required this.host,
     this.port = 443,
     required this.username,
     required this.password,
-    this.hub = 'VPN',
+    this.hub = 'VPNGATE',
     this.clientMac = '',
     this.sessionName = 'SoftEther VPN',
     this.dns = '8.8.8.8',
@@ -62,6 +89,14 @@ class SoftetherServer {
     this.excludedApps = const [],
     this.allowedApps = const [],
     this.connectTimeoutMs = 30000,
+    this.maxConnections = 4,
+    this.establishIntervalMs = 1000,
+    this.duplexMode = 'auto',
+    this.useEncrypt = true,
+    this.useCompress = false,
+    this.disableUdpAcceleration = true,
+    this.udpPort = 0,
+    this.qos = true,
   });
 
   Map<String, dynamic> toMap() => {
@@ -78,6 +113,14 @@ class SoftetherServer {
         'excludedApps': excludedApps,
         'allowedApps': allowedApps,
         'connectTimeoutMs': connectTimeoutMs,
+        'maxConnections': maxConnections,
+        'establishIntervalMs': establishIntervalMs,
+        'duplexMode': duplexMode,
+        'useEncrypt': useEncrypt,
+        'useCompress': useCompress,
+        'disableUdpAcceleration': disableUdpAcceleration,
+        'udpPort': udpPort,
+        'qos': qos,
       };
 }
 

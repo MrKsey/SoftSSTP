@@ -44,8 +44,13 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
   bool _loading = true;
   String _error = '';
 
-  _SortKey _sortKey = _SortKey.country;
+  // Default ordering: fastest server first.
+  _SortKey _sortKey = _SortKey.ping;
   bool _sortAsc = true;
+
+  /// In-flight or finished ping measurements, keyed by "host:port". Servers that
+  /// expose SSTP and SoftEther on the same endpoint share one measurement.
+  final Map<String, Future<int?>> _pingFutures = {};
 
   // Filters. An empty country set means "all countries".
   bool _onlyPort443 = false;
@@ -121,6 +126,7 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       _loading = true;
       _error = '';
       _entries.clear();
+      _pingFutures.clear();
     });
 
     try {
@@ -141,7 +147,8 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
   }
 
   /// Measures the ping of every server once, a few at a time, updating each
-  /// row as soon as its result arrives.
+  /// row as soon as its result arrives. Servers that share an endpoint (same
+  /// host and port, e.g. SSTP and SoftEther on 443) are measured a single time.
   Future<void> _measurePings() async {
     const concurrency = 8;
     var next = 0;
@@ -152,10 +159,12 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
         if (index >= _entries.length) return;
 
         final entry = _entries[index];
-        final ping = await _service.measurePing(
-          entry.profile.host,
-          entry.profile.port,
+        final key = '${entry.profile.host}:${entry.profile.port}';
+        final future = _pingFutures.putIfAbsent(
+          key,
+          () => _service.measurePing(entry.profile.host, entry.profile.port),
         );
+        final ping = await future;
         if (!mounted) return;
         setState(() {
           entry.pingMs = ping;
@@ -190,12 +199,13 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       name: server.defaultName,
       isPublic: true,
       protocol: server.protocol,
-      // VPN Gate public servers join the default virtual hub.
-      hubName: 'VPN',
+      // VPN Gate public servers join the "VPNGATE" virtual hub.
+      hubName: 'VPNGATE',
       host: server.host,
       port: server.port,
       username: 'vpn',
       password: 'vpn',
+      seUdpPort: server.udpPort,
     );
 
     await provider.addProfile(profile);
@@ -214,13 +224,6 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
   /// key and direction. Unmeasured pings always sort last.
   List<_ServerEntry> _sortedEntries(Set<String> addedKeys) {
     final filtered = _filteredEntries(addedKeys);
-
-    // Reordering while pings are still arriving would make the rows jump around,
-    // so keep the original order until every server has been measured.
-    if (_sortKey == _SortKey.ping && filtered.any((e) => e.measuring)) {
-      return List<_ServerEntry>.from(filtered);
-    }
-
     final list = List<_ServerEntry>.from(filtered);
 
     int byFields(_ServerEntry a, _ServerEntry b) {
@@ -240,19 +243,21 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
         case _SortKey.quality:
           return a.profile.qualityMbps.compareTo(b.profile.qualityMbps);
         case _SortKey.ping:
-          final pa = a.pingMs;
-          final pb = b.pingMs;
-          if (pa == null && pb == null) return 0;
-          if (pa == null) return 1; // not measured yet -> last
-          if (pb == null) return -1;
-          return pa.compareTo(pb);
+          return 0;
       }
     }
 
     list.sort((a, b) {
+      if (_sortKey == _SortKey.ping) {
+        final pa = a.pingMs;
+        final pb = b.pingMs;
+        // Unmeasured servers stay last regardless of the sort direction.
+        if (pa == null && pb == null) return 0;
+        if (pa == null) return 1;
+        if (pb == null) return -1;
+        return _sortAsc ? pa.compareTo(pb) : pb.compareTo(pa);
+      }
       final result = byFields(a, b);
-      // Ping keeps nulls last in both directions (handled above).
-      if (_sortKey == _SortKey.ping) return result;
       return _sortAsc ? result : -result;
     });
     return list;
@@ -786,7 +791,7 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
     if (entry.profile.lineQuality.isNotEmpty) {
       parts.add(entry.profile.lineQuality);
     }
-    parts.add(entry.pingMs == null ? 'Ping: n/a' : 'Ping: ${entry.pingMs} ms');
+    parts.add(entry.pingMs == null ? 'n/a' : '${entry.pingMs} ms');
 
     return Text(
       parts.join('  •  '),

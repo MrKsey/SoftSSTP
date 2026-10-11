@@ -32,6 +32,28 @@ class SoftEtherClient {
     }
 
     /**
+     * Set session / multi-connection options from the profile (must be called
+     * before connect):
+     * @param maxConnections number of TCP connections (1-8)
+     * @param establishIntervalMs delay between additional-connection attempts
+     * @param useEncrypt "Encrypt VPN Session with SSL" login-PACK flag
+     * @param useCompress "Use Data Compression" login-PACK flag
+     * @param qos "VoIP / QoS functions" login-PACK flag
+     */
+    fun setSessionOptions(
+        maxConnections: Int,
+        establishIntervalMs: Int,
+        useEncrypt: Boolean,
+        useCompress: Boolean,
+        qos: Boolean
+    ) {
+        if (nativeHandle == 0L) return
+        nativeSetSessionOptions(
+            nativeHandle, maxConnections, establishIntervalMs, useEncrypt, useCompress, qos
+        )
+    }
+
+    /**
      * Get all active TCP socket FDs (primary + additional) for VpnService.protect()
      * @return Array of socket FDs, or null if none
      */
@@ -190,6 +212,10 @@ class SoftEtherClient {
     external fun nativeSetAuthType(handle: Long, authType: Int)
     external fun nativeSetMaxConnection(handle: Long, maxConnections: Int)
     external fun nativeSetHalfConnection(handle: Long, halfConnection: Boolean)
+    external fun nativeSetSessionOptions(
+        handle: Long, maxConnections: Int, establishIntervalMs: Int,
+        useEncrypt: Boolean, useCompress: Boolean, qos: Boolean
+    )
     external fun nativeGetNumConnections(handle: Long): Int
     external fun nativeGetAllSocketFds(handle: Long): IntArray?
     external fun nativeForceCloseSocket(handle: Long)

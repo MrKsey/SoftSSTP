@@ -76,6 +76,15 @@ class VpnProvider extends ChangeNotifier {
   String _sslVersion = 'AUTO';
   bool _useCustomSni = false;
   String _customSni = '';
+  // SoftEther session options mirrored from the active profile (ignored for SSTP).
+  int _seTcpConnections = 4;
+  int _seEstablishIntervalMs = 1000;
+  String _seDuplexMode = 'auto';
+  bool _seEncrypt = true;
+  bool _seCompress = false;
+  bool _seDisableUdpAcceleration = true;
+  int _seUdpPort = 0;
+  bool _seDisableQos = false;
   bool _connectionLogEnabled = true;
   String _externalIpBefore = '';
   String _externalIpAfter = '';
@@ -241,6 +250,16 @@ class VpnProvider extends ChangeNotifier {
 
   bool get useCustomSni => _useCustomSni;
   String get customSni => _customSni;
+
+  // SoftEther session options (Windows-client equivalents).
+  int get seTcpConnections => _seTcpConnections;
+  int get seEstablishIntervalMs => _seEstablishIntervalMs;
+  String get seDuplexMode => _seDuplexMode;
+  bool get seEncrypt => _seEncrypt;
+  bool get seCompress => _seCompress;
+  bool get seDisableUdpAcceleration => _seDisableUdpAcceleration;
+  int get seUdpPort => _seUdpPort;
+  bool get seDisableQos => _seDisableQos;
   bool get connectionLogEnabled => _connectionLogEnabled;
   String get externalIpBefore => _externalIpBefore;
   String get externalIpAfter => _externalIpAfter;
@@ -519,6 +538,14 @@ class VpnProvider extends ChangeNotifier {
     sslVersion: _sslVersion,
     useCustomSni: _useCustomSni,
     customSni: _customSni,
+    seTcpConnections: _seTcpConnections,
+    seEstablishIntervalMs: _seEstablishIntervalMs,
+    seDuplexMode: _seDuplexMode,
+    seEncrypt: _seEncrypt,
+    seCompress: _seCompress,
+    seDisableUdpAcceleration: _seDisableUdpAcceleration,
+    seUdpPort: _seUdpPort,
+    seDisableQos: _seDisableQos,
   );
 
   /// Copies [profile] into the working settings.
@@ -560,6 +587,14 @@ class VpnProvider extends ChangeNotifier {
     _sslVersion = profile.sslVersion;
     _useCustomSni = profile.useCustomSni;
     _customSni = profile.customSni;
+    _seTcpConnections = profile.seTcpConnections;
+    _seEstablishIntervalMs = profile.seEstablishIntervalMs;
+    _seDuplexMode = profile.seDuplexMode;
+    _seEncrypt = profile.seEncrypt;
+    _seCompress = profile.seCompress;
+    _seDisableUdpAcceleration = profile.seDisableUdpAcceleration;
+    _seUdpPort = profile.seUdpPort;
+    _seDisableQos = profile.seDisableQos;
   }
 
   /// Persists the whole profile list, refreshing the active entry from the
@@ -1435,6 +1470,14 @@ class VpnProvider extends ChangeNotifier {
       mtu: _pppMtu,
       addDefaultRoute: _addDefaultRoute,
       allowedApps: allowedApps,
+      maxConnections: _seTcpConnections,
+      establishIntervalMs: _seEstablishIntervalMs,
+      duplexMode: _seDuplexMode,
+      useEncrypt: _seEncrypt,
+      useCompress: _seCompress,
+      disableUdpAcceleration: _seDisableUdpAcceleration,
+      udpPort: _seUdpPort,
+      qos: !_seDisableQos,
     );
     // Make sure the native side knows whether to persist the log.
     await _softether.setConnectionLogging(enabled: _connectionLogEnabled);

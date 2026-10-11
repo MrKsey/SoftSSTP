@@ -12,6 +12,10 @@ class PublicProfile {
   /// Protocol port (443 when the list does not specify one).
   final int port;
 
+  /// SoftEther UDP port for UDP acceleration (0 when the list does not specify
+  /// one). Ignored for SSTP.
+  final int udpPort;
+
   /// ISO 3166-1 alpha-2 country code, e.g. "JP".
   final String countryCode;
 
@@ -25,6 +29,7 @@ class PublicProfile {
     this.protocol = VpnProtocol.sstp,
     required this.host,
     required this.port,
+    this.udpPort = 0,
     required this.countryCode,
     required this.countryName,
     required this.lineQuality,

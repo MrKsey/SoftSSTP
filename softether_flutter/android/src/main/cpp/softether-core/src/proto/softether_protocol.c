@@ -682,18 +682,18 @@ static uint8_t* build_login_pack(const char* hub_name, const char* username,
     pack_add_int(&p, "client_build", client_build);
     pack_add_int(&p, "client_id", 0);
     pack_add_int(&p, "protocol", rudp ? 1 : 0);   // 0 = TCP, 1 = UDP
-    pack_add_int(&p, "max_connection", 4);  // Request 4 connections for multi-connection throughput
-    pack_add_int(&p, "use_encrypt", 1);
-    // Phase 13B: advertise no session compression. VPN Gate traffic is
-    // TLS-encrypted and incompressible; zlib per block only burns CPU.
-    pack_add_int(&p, "use_compress", 0);
+    pack_add_int(&p, "max_connection", conn->max_connection);  // from profile (1-8)
+    pack_add_int(&p, "use_encrypt", conn->req_use_encrypt ? 1 : 0);
+    // Data compression: off by default (VPN Gate traffic is TLS-encrypted and
+    // incompressible; zlib per block only burns CPU). Exposed as a profile option.
+    pack_add_int(&p, "use_compress", conn->req_use_compress ? 1 : 0);
     // Phase 17: half_connection is device-tier driven (Kotlin sets conn->half_connection
     // before connect). 1 = half-duplex (primary C2S, additional S2C/C2S split);
     // 0 = full-duplex (every connection negotiated BOTH).
     pack_add_int(&p, "half_connection", conn->half_connection ? 1 : 0);
     pack_add_int(&p, "require_bridge_routing_mode", 0);
     pack_add_int(&p, "require_monitor_mode", 0);
-    pack_add_int(&p, "qos", 1);
+    pack_add_int(&p, "qos", conn->req_qos ? 1 : 0);
     pack_add_data(&p, "pencore", pencore_data, pencore_size);
 
     // Client info fields (reported in server session list)
@@ -1000,12 +1000,19 @@ softether_connection_t* softether_create(void) {
     conn->max_connection = 4;  // Target: request 4 connections in login PACK
     conn->half_connection = 0;
     conn->primary_direction = TCP_DIRECTION_BOTH;
+    conn->additional_connect_interval_ms = ADDITIONAL_CONNECT_INTERVAL_MS;
     conn->next_connect_time = 0;
     conn->additional_failed_count = 0;
     memset(conn->additional, 0, sizeof(conn->additional));
     conn->additional_connecting = 0;
     conn->additional_connect_slot = -1;
     conn->additional_connect_result = -1;
+
+    // Session options requested in the login PACK (Windows-client defaults:
+    // SSL encryption on, compression off, VoIP/QoS on).
+    conn->req_use_encrypt = 1;
+    conn->req_use_compress = 0;
+    conn->req_qos = 1;
 
     // Per-link I/O mutexes: one for the primary TCP socket and one per
     // additional slot. Each live link owns its SSL I/O lock so I/O on one link
@@ -1417,15 +1424,15 @@ static int perform_authentication_http(softether_connection_t* conn,
         LOGD("Server half_connection=%u", half_conn);
     }
     
-    // Determine data channel mode (same logic as reference SoftEther)
-    if (conn->server_use_encrypt && !conn->server_use_fast_rc4) {
-        conn->use_ssl_data = 1;
-        LOGD("Data channel: SSL encryption");
-    } else {
-        conn->use_ssl_data = 0;
-        LOGD("Data channel: raw TCP (use_encrypt=%u, use_fast_rc4=%u)",
-             conn->server_use_encrypt, conn->server_use_fast_rc4);
-    }
+    // Determine data channel mode. This client always establishes the session
+    // over the SSL-VPN (TLS) transport, so the data channel always runs through
+    // the TLS layer. The server's use_encrypt / use_fast_rc4 flags select
+    // SoftEther's *session* encryption, which sits INSIDE that TLS transport;
+    // they must not switch the data path to raw TCP — the raw path writes
+    // plaintext onto the TLS socket and corrupts the stream.
+    conn->use_ssl_data = 1;
+    LOGD("Data channel: TLS (server use_encrypt=%u, use_fast_rc4=%u)",
+         conn->server_use_encrypt, conn->server_use_fast_rc4);
     LOGD("Server use_compress=%u", conn->server_use_compress);
     // Phase 13B: mirror the negotiated compression state into the RUDP context
     // so rudp_send only compresses when the session actually uses compression.
@@ -2605,7 +2612,10 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
     conn->state = STATE_CONNECTED;
     LOGD("Connection established successfully");
 
-    // Schedule additional connections (multi-connection support).
+    // Schedule additional connections (multi-connection support). Re-enabled
+    // now that the TLS handshake never holds g_tls_use_lock across network I/O
+    // (a stalled additional-connection handshake can no longer freeze the
+    // primary data path — see the non-blocking handshake in aes_wrapper.c).
     // Skipped when connected via the NAT-T RUDP transport: additional TCP
     // sockets to a CGNAT server would fail (the transport channel is primary).
     if (conn->using_nat_t) {
@@ -2613,17 +2623,20 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
         conn->next_connect_time = 0;
         LOGD("Multi-connection: disabled for NAT-T transport");
     } else {
-        // Multi-connection is disabled. The background additional-connection
-        // handshake shares the process-wide g_tls_use_lock with the data path:
-        // when the server accepts the TCP connection but never finishes the TLS
-        // handshake (observed against VPN Gate), that handshake holds the lock
-        // and freezes every read AND write on the primary connection — the
-        // receive loop stalls inside ssl_write (keepalive), the keepalive
-        // watchdog tears the session down ~35 s after CONNECTED, and the cycle
-        // repeats. A single BOTH socket carries the tunnel reliably.
-        conn->max_connection = 1;
-        conn->next_connect_time = 0;
-        LOGD("Multi-connection: disabled (single connection)");
+        // Clamp to what the server allows and to our compile-time maximum.
+        if (conn->server_max_connection > 0 &&
+            (int)conn->server_max_connection < conn->max_connection) {
+            LOGD("Multi-connection: server allows %u, requested %d",
+                 conn->server_max_connection, conn->max_connection);
+            conn->max_connection = (int)conn->server_max_connection;
+        }
+        if (conn->max_connection < 1) conn->max_connection = 1;
+        if (conn->max_connection > MAX_SE_CONNECTIONS) {
+            conn->max_connection = MAX_SE_CONNECTIONS;
+        }
+        conn->next_connect_time = softether_tick_ms() + conn->additional_connect_interval_ms;
+        LOGD("Multi-connection: target %d connection(s), interval %u ms",
+             conn->max_connection, conn->additional_connect_interval_ms);
     }
     
     // Check for any leftover SSL data from the HTTP exchange
@@ -3000,7 +3013,7 @@ static void softether_maintain_links(softether_connection_t* conn) {
                     conn->additional_connect_slot = -1;
                 }
             }
-            conn->next_connect_time = now + ADDITIONAL_CONNECT_INTERVAL_MS;
+            conn->next_connect_time = now + conn->additional_connect_interval_ms;
         }
     }
 
@@ -3966,6 +3979,30 @@ void softether_set_auth_type(softether_connection_t* conn, int auth_type) {
         conn->forced_auth_type = auth_type;
         LOGD("Auth type set to %d", auth_type);
     }
+}
+
+void softether_set_session_options(softether_connection_t* conn,
+                                   int max_connection,
+                                   int additional_connect_interval_ms,
+                                   int use_encrypt,
+                                   int use_compress,
+                                   int qos) {
+    if (conn == NULL) return;
+
+    if (max_connection < 1) max_connection = 1;
+    if (max_connection > MAX_SE_CONNECTIONS) max_connection = MAX_SE_CONNECTIONS;
+    conn->max_connection = max_connection;
+
+    if (additional_connect_interval_ms < 0) additional_connect_interval_ms = 0;
+    conn->additional_connect_interval_ms = (uint32_t)additional_connect_interval_ms;
+
+    conn->req_use_encrypt = use_encrypt ? 1 : 0;
+    conn->req_use_compress = use_compress ? 1 : 0;
+    conn->req_qos = qos ? 1 : 0;
+
+    LOGD("Session options: max_connection=%d interval=%dms encrypt=%d compress=%d qos=%d",
+         conn->max_connection, additional_connect_interval_ms,
+         conn->req_use_encrypt, conn->req_use_compress, conn->req_qos);
 }
 
 // Reconnection support - Attempt to reconnect using stored credentials

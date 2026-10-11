@@ -29,6 +29,12 @@ class VpngateService {
     dotAll: true,
   );
 
+  // The SSL-VPN (SoftEther) cell may also expose a UDP port, e.g. "UDP: 443".
+  static final RegExp _softetherUdpRe = RegExp(
+    r"howto_softether\.aspx.*?UDP:\s*(\d+)",
+    dotAll: true,
+  );
+
   // Country flag image and the country name right after it.
   static final RegExp _flagRe = RegExp(
     r"images/flags/([A-Za-z]{2})\.png'[^>]*><br>([^<]+)",
@@ -103,6 +109,9 @@ class VpngateService {
       final sePort = int.tryParse(
         _softetherPortRe.firstMatch(row)?.group(1) ?? '',
       );
+      final seUdpPort = int.tryParse(
+        _softetherUdpRe.firstMatch(row)?.group(1) ?? '',
+      );
       if (ddns != null && ddns.isNotEmpty && sePort != null) {
         if (seen.add(
           '${VpnProtocol.softether}:${ddns.toLowerCase()}:$sePort',
@@ -112,6 +121,7 @@ class VpngateService {
               protocol: VpnProtocol.softether,
               host: ddns,
               port: sePort,
+              udpPort: seUdpPort ?? 0,
               countryCode: countryCode,
               countryName: countryName,
               lineQuality: quality,

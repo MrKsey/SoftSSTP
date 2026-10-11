@@ -58,7 +58,16 @@ data class ConnectionConfig(
     val fullDuplex: Boolean? = null,
     // Optional client MAC address ("AA:BB:CC:DD:EE:FF"). When empty the native
     // side derives a stable MAC from the server identity.
-    val clientMac: String = ""
+    val clientMac: String = "",
+    // SoftEther session options (Windows-client equivalents). maxConnections is
+    // the number of TCP connections (1-8); establishIntervalMs is the delay
+    // between additional-connection attempts; useEncrypt / useCompress / qos are
+    // the login-PACK request flags.
+    val maxConnections: Int = 4,
+    val establishIntervalMs: Int = 1000,
+    val useEncrypt: Boolean = true,
+    val useCompress: Boolean = false,
+    val qos: Boolean = true
 ) : Parcelable {
 
     constructor(parcel: Parcel) : this(
@@ -101,7 +110,12 @@ data class ConnectionConfig(
                 else -> false
             }
         },
-        clientMac = parcel.readString() ?: ""
+        clientMac = parcel.readString() ?: "",
+        maxConnections = parcel.readInt(),
+        establishIntervalMs = parcel.readInt(),
+        useEncrypt = parcel.readByte() != 0.toByte(),
+        useCompress = parcel.readByte() != 0.toByte(),
+        qos = parcel.readByte() != 0.toByte()
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -143,6 +157,11 @@ data class ConnectionConfig(
             false -> 2
         })
         parcel.writeString(clientMac)
+        parcel.writeInt(maxConnections)
+        parcel.writeInt(establishIntervalMs)
+        parcel.writeByte(if (useEncrypt) 1 else 0)
+        parcel.writeByte(if (useCompress) 1 else 0)
+        parcel.writeByte(if (qos) 1 else 0)
     }
 
     override fun describeContents(): Int = 0

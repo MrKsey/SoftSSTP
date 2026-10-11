@@ -37,6 +37,15 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   final _hubController = TextEditingController();
   final _clientMacController = TextEditingController();
 
+  // SoftEther session options (Windows-client equivalents).
+  final _seTcpConnectionsController = TextEditingController();
+  final _seIntervalController = TextEditingController();
+  String _seDuplexMode = 'auto';
+  bool _seEncrypt = true;
+  bool _seCompress = false;
+  bool _seDisableUdpAcceleration = true;
+  bool _seDisableQos = false;
+
   int _selectedColorIndex = 0;
 
   bool _obscurePassword = true;
@@ -129,6 +138,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     _reconnectionCountController.text = profile.reconnectionCount.toString();
     _reconnectionIntervalController.text = profile.reconnectionInterval
         .toString();
+
+    _seTcpConnectionsController.text = profile.seTcpConnections.toString();
+    _seIntervalController.text = profile.seEstablishIntervalMs.toString();
+    _seDuplexMode = profile.seDuplexMode;
+    _seEncrypt = profile.seEncrypt;
+    _seCompress = profile.seCompress;
+    _seDisableUdpAcceleration = profile.seDisableUdpAcceleration;
+    _seDisableQos = profile.seDisableQos;
   }
 
   @override
@@ -150,6 +167,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     _reconnectionIntervalController.dispose();
     _hubController.dispose();
     _clientMacController.dispose();
+    _seTcpConnectionsController.dispose();
+    _seIntervalController.dispose();
     super.dispose();
   }
 
@@ -164,6 +183,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         ),
         title: Text(_isNew ? 'New profile' : 'Edit profile'),
         actions: [
+          IconButton(
+            tooltip: 'Help',
+            icon: const Icon(Icons.help_outline),
+            onPressed: _showHelpDialog,
+          ),
           TextButton(
             onPressed: _saveSettings,
             child: Text(
@@ -195,13 +219,21 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               const SizedBox(height: 16),
               _buildDnsSection(),
               const SizedBox(height: 32),
-              _buildSectionTitle('Proxy Settings'),
-              const SizedBox(height: 16),
-              _buildProxySection(),
-              const SizedBox(height: 32),
-              _buildSectionTitle('PPP'),
-              const SizedBox(height: 16),
-              _buildPppSection(),
+              // Protocol-specific settings: SSTP uses PPP/Proxy/TLS/Advanced,
+              // SoftEther uses its own session options.
+              if (_protocol == VpnProtocol.sstp) ...[
+                _buildSectionTitle('Proxy Settings'),
+                const SizedBox(height: 16),
+                _buildProxySection(),
+                const SizedBox(height: 32),
+                _buildSectionTitle('PPP'),
+                const SizedBox(height: 16),
+                _buildPppSection(),
+              ] else ...[
+                _buildSectionTitle('SoftEther'),
+                const SizedBox(height: 16),
+                _buildSoftetherSection(),
+              ],
               const SizedBox(height: 32),
               _buildSectionTitle('Routing'),
               const SizedBox(height: 16),
@@ -214,14 +246,16 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               _buildSectionTitle('Reconnection'),
               const SizedBox(height: 16),
               _buildReconnectionSection(),
-              const SizedBox(height: 32),
-              _buildSectionTitle('Advanced'),
-              const SizedBox(height: 16),
-              _buildAdvancedSection(),
-              const SizedBox(height: 32),
-              _buildSectionTitle('Certificate'),
-              const SizedBox(height: 16),
-              _buildCertificateSection(),
+              if (_protocol == VpnProtocol.sstp) ...[
+                const SizedBox(height: 32),
+                _buildSectionTitle('Advanced'),
+                const SizedBox(height: 16),
+                _buildAdvancedSection(),
+                const SizedBox(height: 32),
+                _buildSectionTitle('Certificate'),
+                const SizedBox(height: 16),
+                _buildCertificateSection(),
+              ],
               const SizedBox(height: 40),
             ],
           ),
@@ -325,6 +359,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   ),
                 ),
               ),
+              _helpIcon(
+                'Protocol',
+                'SSTP connects with Microsoft SSTP over TLS. SoftEther '
+                    "connects to the server's SSL-VPN (TCP) endpoint and joins "
+                    'the SoftEther virtual hub.',
+              ),
               DropdownButton<String>(
                 value: _protocol,
                 dropdownColor: AppTheme.cardColor,
@@ -347,12 +387,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     // Switching protocol must not wipe anything: every field
                     // keeps its own controller, so the common ones carry over
                     // unchanged. Seed the hub default only when it is still
-                    // empty (public VPN Gate servers use "VPN", hand-made
+                    // empty (public VPN Gate servers use "VPNGATE", hand-made
                     // profiles the server default "DEFAULT").
                     if (value == VpnProtocol.softether &&
                         _hubController.text.trim().isEmpty) {
                       _hubController.text = _profile.isPublic
-                          ? 'VPN'
+                          ? 'VPNGATE'
                           : 'DEFAULT';
                     }
                   });
@@ -570,18 +610,23 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               ),
             ),
           ],
-          Divider(color: AppTheme.dividerColor, height: 24),
-          _buildSwitchTile(
-            icon: Icons.dns_outlined,
-            title: 'Request DNS from server',
-            subtitle: 'Use DNS servers pushed by the VPN server',
-            value: _requestDns,
-            onChanged: (value) {
-              setState(() {
-                _requestDns = value;
-              });
-            },
-          ),
+          if (_protocol == VpnProtocol.sstp) ...[
+            Divider(color: AppTheme.dividerColor, height: 24),
+            _buildSwitchTile(
+              icon: Icons.dns_outlined,
+              title: 'Request DNS from server',
+              subtitle: 'Use DNS servers pushed by the VPN server',
+              value: _requestDns,
+              help:
+                  'Ask the VPN server for its DNS servers (SSTP only). When '
+                  'off, only the Custom DNS above is used.',
+              onChanged: (value) {
+                setState(() {
+                  _requestDns = value;
+                });
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -708,6 +753,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   ),
                 ),
               ),
+              _helpIcon(
+                'Authentication',
+                'PPP authentication method. Auto tries MSCHAPv2 first, then '
+                    'PAP if the server rejects it.',
+              ),
               DropdownButton<String>(
                 value: _authProtocol,
                 dropdownColor: AppTheme.cardColor,
@@ -809,6 +859,194 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ),
     );
   }
+
+  Widget _buildSoftetherSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 19),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  key: const ValueKey('softether_tcp_connections'),
+                  controller: _seTcpConnectionsController,
+                  style: TextStyle(color: AppTheme.textPrimary),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Number of TCP connections (1-8)',
+                    hintText: '4',
+                  ),
+                  validator: (value) {
+                    final n = int.tryParse((value ?? '').trim());
+                    if (n == null || n < 1 || n > 8) {
+                      return 'Enter a value between 1 and 8';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              _helpIcon(
+                'Number of TCP connections',
+                'How many parallel TCP connections the client may open (1-8). '
+                    'More connections can raise throughput on fast links but '
+                    'cost battery. Default 4.',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  key: const ValueKey('softether_establish_interval'),
+                  controller: _seIntervalController,
+                  style: TextStyle(color: AppTheme.textPrimary),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Establishing interval (ms)',
+                    hintText: '1000',
+                  ),
+                ),
+              ),
+              _helpIcon(
+                'Establishing interval',
+                'Milliseconds to wait between opening additional connections, '
+                    'so they are not established all at once. Default 1000 ms.',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _dropdownTitleRow('Duplex mode', help: _seDuplexHelp),
+              ),
+              DropdownButton<String>(
+                value: _seDuplexMode,
+                dropdownColor: AppTheme.cardColor,
+                style: TextStyle(color: AppTheme.textPrimary),
+                underline: const SizedBox(),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'auto',
+                    child: Text('Auto', style: TextStyle(fontSize: 14)),
+                  ),
+                  DropdownMenuItem(
+                    value: 'half',
+                    child: Text('Half', style: TextStyle(fontSize: 14)),
+                  ),
+                  DropdownMenuItem(
+                    value: 'full',
+                    child: Text('Full', style: TextStyle(fontSize: 14)),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _seDuplexMode = value;
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _mtuController,
+                  style: TextStyle(color: AppTheme.textPrimary),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'MTU',
+                    hintText: '1500',
+                  ),
+                ),
+              ),
+              _helpIcon(
+                'MTU',
+                'Tunnel MTU. Lower it if large packets are dropped '
+                    '(e.g. 1400).',
+              ),
+            ],
+          ),
+          Divider(color: AppTheme.dividerColor, height: 24),
+          _buildSwitchTile(
+            icon: Icons.enhanced_encryption_outlined,
+            title: 'Encrypt VPN Session with SSL',
+            subtitle: 'Ask the server to encrypt the session data',
+            value: _seEncrypt,
+            help:
+                'The transport is always TLS; this adds SoftEther session '
+                'encryption on top. Leave it on unless a server requires '
+                'otherwise.',
+            onChanged: (value) {
+              setState(() {
+                _seEncrypt = value;
+              });
+            },
+          ),
+          Divider(color: AppTheme.dividerColor, height: 24),
+          _buildSwitchTile(
+            icon: Icons.compress_outlined,
+            title: 'Use Data Compression',
+            subtitle: 'Ask the server to compress the session data',
+            value: _seCompress,
+            help:
+                'Off by default: VPN traffic is mostly TLS and '
+                'incompressible, so it usually only costs CPU.',
+            onChanged: (value) {
+              setState(() {
+                _seCompress = value;
+              });
+            },
+          ),
+          Divider(color: AppTheme.dividerColor, height: 24),
+          _buildSwitchTile(
+            icon: Icons.speed_outlined,
+            title: 'Disable UDP Acceleration',
+            subtitle: 'Connect over TCP only',
+            value: _seDisableUdpAcceleration,
+            help:
+                'On by default: this client connects over TCP. Turn it off '
+                'to let the client try SoftEther UDP acceleration when the '
+                'server advertises a UDP port.',
+            onChanged: (value) {
+              setState(() {
+                _seDisableUdpAcceleration = value;
+              });
+            },
+          ),
+          Divider(color: AppTheme.dividerColor, height: 24),
+          _buildSwitchTile(
+            icon: Icons.phone_in_talk_outlined,
+            title: 'Disable VoIP / QoS Functions',
+            subtitle: 'Turn off SoftEther VoIP/QoS handling',
+            value: _seDisableQos,
+            help:
+                'Off by default (QoS enabled). Turn it on to disable the '
+                'SoftEther VoIP/QoS functions.',
+            onChanged: (value) {
+              setState(() {
+                _seDisableQos = value;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  static const String _seDuplexHelp =
+      'Auto picks half or full duplex from the device tier and link quality. '
+      'Half splits each connection into a direction; Full makes every '
+      'connection bidirectional.';
 
   Widget _buildRoutingSection() {
     return Container(
@@ -1209,6 +1447,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   ),
                 ),
               ),
+              _helpIcon(
+                'SSL Version',
+                'Pin a TLS version. Auto tries TLS 1.3 first, then falls back '
+                    'to 1.2, 1.1 and 1.0.',
+              ),
               DropdownButton<String>(
                 value: _sslVersion,
                 dropdownColor: AppTheme.cardColor,
@@ -1280,6 +1523,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
+    String? help,
   }) {
     return Row(
       children: [
@@ -1289,13 +1533,20 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: AppTheme.textPrimary,
-                ),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (help != null) _helpIcon(title, help),
+                ],
               ),
               const SizedBox(height: 2),
               Text(
@@ -1307,6 +1558,276 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         ),
         Switch(value: value, onChanged: onChanged),
       ],
+    );
+  }
+
+  /// A small "?" button that opens a dialog with a short description.
+  Widget _helpIcon(String title, String body) {
+    return IconButton(
+      iconSize: 16,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+      tooltip: 'About "$title"',
+      icon: Icon(Icons.help_outline, color: AppTheme.textSecondary),
+      onPressed: () => _showOptionHelp(title, body),
+    );
+  }
+
+  void _showOptionHelp(String title, String body) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        title: Text(title, style: TextStyle(color: AppTheme.textPrimary)),
+        content: SingleChildScrollView(
+          child: Text(
+            body,
+            style: TextStyle(color: AppTheme.textPrimary, height: 1.35),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Title row used by dropdown settings: label + optional help button.
+  Widget _dropdownTitleRow(String title, {String? help}) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+        ),
+        if (help != null) _helpIcon(title, help),
+      ],
+    );
+  }
+
+  /// A full reference of every option, grouped by protocol.
+  void _showHelpDialog() {
+    const sstpHelp = <(String, String)>[
+      (
+        'Protocol',
+        'SSTP connects with Microsoft SSTP over TLS. SoftEther connects to '
+            "the server's SSL-VPN (TCP) endpoint and uses the SoftEther "
+            'virtual hub.',
+      ),
+      (
+        'Host / Port',
+        'Server address and TCP port. VPN Gate uses 443 for both protocols.',
+      ),
+      (
+        'Username / Password',
+        'Login credentials. VPN Gate public servers use vpn / vpn.',
+      ),
+      (
+        'Virtual hub / Client MAC',
+        'SoftEther only. The virtual hub to join ("VPNGATE" for public VPN '
+            'Gate servers). The client MAC is optional; leave it empty to let '
+            'the app derive a stable address.',
+      ),
+      (
+        'Custom DNS / Request DNS from server',
+        'Custom DNS overrides the resolver. "Request DNS from server" asks the '
+            'VPN server for its own DNS servers.',
+      ),
+      ('Proxy', 'Route the SSTP connection through an HTTP proxy.'),
+      (
+        'MTU / MRU',
+        'Maximum transmission/receive unit of the tunnel. Lower it if large '
+            'packets are dropped (e.g. 1400).',
+      ),
+      (
+        'Authentication',
+        'PPP authentication method. Auto tries MSCHAPv2 first, then PAP.',
+      ),
+      (
+        'Authentication timeout',
+        'Seconds to wait for the PPP authentication reply.',
+      ),
+      (
+        'IPv4 / IPv6 / Static IPv4',
+        'Which address families to negotiate over PPP, and whether to request '
+            'a fixed IPv4 address instead of DHCP.',
+      ),
+      (
+        'Default route / Route private addresses',
+        'Send all traffic through the VPN, and/or add routes for the private '
+            'IPv4 ranges.',
+      ),
+      (
+        'App Routing',
+        'Allow-list: when enabled, only the selected apps use the tunnel.',
+      ),
+      (
+        'Auto reconnection',
+        'Reconnect automatically after a drop, with a retry count and interval.',
+      ),
+      (
+        'Verify Hostname / Verify SSL Certificate',
+        'Validate the server certificate. Off by default because VPN servers '
+            'commonly use self-signed certificates.',
+      ),
+      (
+        'SSL Version',
+        'Pin a TLS version. Auto tries 1.3 first, then falls back to 1.2/1.1/1.0.',
+      ),
+      (
+        'Custom SNI',
+        'Override the TLS server name (SNI) sent during the handshake.',
+      ),
+      (
+        'Certificate',
+        'Import a custom CA certificate used to validate the server.',
+      ),
+    ];
+
+    const softetherHelp = <(String, String)>[
+      (
+        'Protocol',
+        'SoftEther connects to the server\'s SSL-VPN (TCP) endpoint and joins '
+            'the SoftEther virtual hub. PPP, proxy and TLS options do not apply.',
+      ),
+      (
+        'Host / Port / Username / Password',
+        'SSL-VPN endpoint and credentials. VPN Gate uses vpn / vpn on port 443.',
+      ),
+      (
+        'Virtual hub',
+        'The SoftEther virtual hub to join. VPN Gate public servers use '
+            '"VPNGATE"; a hand-made profile usually targets "DEFAULT".',
+      ),
+      (
+        'Client MAC',
+        'Optional L2 address. Leave empty to derive a stable address from the '
+            'server, which avoids ARP flapping on local-bridge servers.',
+      ),
+      ('Custom DNS', 'Override the resolver pushed by the server.'),
+      (
+        'Number of TCP connections',
+        'How many parallel TCP connections the client may open (1-8). More '
+            'connections can raise throughput on fast links but cost battery. '
+            'Default 4.',
+      ),
+      (
+        'Establishing interval',
+        'Milliseconds to wait between opening additional connections, so they '
+            'are not established all at once. Default 1000 ms.',
+      ),
+      (
+        'Duplex mode',
+        'Auto picks half or full duplex from the device tier and link quality. '
+            'Half splits each connection into a direction; Full makes every '
+            'connection bidirectional.',
+      ),
+      ('MTU', 'Tunnel MTU. Lower it if large packets are dropped (e.g. 1400).'),
+      (
+        'Encrypt VPN Session with SSL',
+        'Ask the server to encrypt the session data. The transport is always '
+            'TLS; this adds SoftEther session encryption on top. Leave it on '
+            'unless a server requires otherwise.',
+      ),
+      (
+        'Use Data Compression',
+        'Ask the server to compress the session data. Off by default: VPN '
+            'traffic is mostly TLS and incompressible, so it usually only '
+            'costs CPU.',
+      ),
+      (
+        'Disable UDP Acceleration',
+        'On by default: this client connects over TCP. Turn it off to let the '
+            'client try SoftEther UDP acceleration when the server advertises a '
+            'UDP port.',
+      ),
+      (
+        'Disable VoIP / QoS Functions',
+        'Turn off SoftEther VoIP/QoS handling. Off by default (QoS enabled).',
+      ),
+    ];
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        title: Text(
+          'Settings help',
+          style: TextStyle(color: AppTheme.textPrimary),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              _helpSectionHeader('SSTP'),
+              ...sstpHelp.map(_helpEntry),
+              const SizedBox(height: 16),
+              _helpSectionHeader('SoftEther'),
+              ...softetherHelp.map(_helpEntry),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _helpSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: AppTheme.primaryColor,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _helpEntry((String, String) entry) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            entry.$1,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            entry.$2,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1395,7 +1916,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       isPublic: current.isPublic,
       protocol: _protocol,
       hubName: _hubController.text.trim().isEmpty
-          ? (current.isPublic ? 'VPN' : 'DEFAULT')
+          ? (current.isPublic ? 'VPNGATE' : 'DEFAULT')
           : _hubController.text.trim(),
       clientMac: _clientMacController.text.trim(),
       host: _hostController.text.trim(),
@@ -1429,6 +1950,15 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       sslVersion: _sslVersion,
       useCustomSni: _useCustomSni,
       customSni: _sniController.text.trim(),
+      seTcpConnections: int.tryParse(_seTcpConnectionsController.text) ?? 4,
+      seEstablishIntervalMs: int.tryParse(_seIntervalController.text) ?? 1000,
+      seDuplexMode: _seDuplexMode,
+      seEncrypt: _seEncrypt,
+      seCompress: _seCompress,
+      seDisableUdpAcceleration: _seDisableUdpAcceleration,
+      seDisableQos: _seDisableQos,
+      // Keep the parsed UDP port from the public server list, if any.
+      seUdpPort: current.seUdpPort,
     );
 
     if (_isNew) {

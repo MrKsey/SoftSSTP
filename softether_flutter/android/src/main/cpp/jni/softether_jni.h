@@ -49,6 +49,12 @@ JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGe
 JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetMaxConnection(
     JNIEnv *env, jobject thiz, jlong handle, jint maxConnections);
 
+// Session options: max connections, additional-connect interval, and the
+// login-PACK flags (SSL session encryption, compression, QoS).
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetSessionOptions(
+    JNIEnv *env, jobject thiz, jlong handle, jint maxConnections, jint intervalMs,
+    jboolean useEncrypt, jboolean useCompress, jboolean qos);
+
 JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNumConnections(
     JNIEnv *env, jobject thiz, jlong handle);
 

@@ -365,6 +365,23 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
     LOGD("Set half_connection to %d", conn->half_connection);
 }
 
+// Session / multi-connection options from the profile (SoftEther Windows client
+// equivalents): number of TCP connections, additional-connection interval, and
+// the login-PACK flags for SSL session encryption, compression and QoS.
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetSessionOptions(
+    JNIEnv *env, jobject thiz, jlong handle, jint maxConnections, jint intervalMs,
+    jboolean useEncrypt, jboolean useCompress, jboolean qos) {
+    if (handle == 0) {
+        LOGE("Invalid handle for setSessionOptions");
+        return;
+    }
+    softether_connection_t* conn = (softether_connection_t*)handle;
+    softether_set_session_options(conn, maxConnections, intervalMs,
+                                  useEncrypt ? 1 : 0,
+                                  useCompress ? 1 : 0,
+                                  qos ? 1 : 0);
+}
+
 JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNumConnections(
     JNIEnv *env, jobject thiz, jlong handle) {
     if (handle == 0) return 0;

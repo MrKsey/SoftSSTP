@@ -427,6 +427,16 @@ class ConnectionController(
         val fullDuplex = DuplexModeSelector.resolve(service, config)
         client.setHalfConnection(!fullDuplex)
         Log.d(TAG, "Duplex mode: ${if (fullDuplex) "FULL" else "HALF"} (4x BOTH / directional split)")
+        // SoftEther session options (Windows-client equivalents) from the profile.
+        client.setSessionOptions(
+            config.maxConnections,
+            config.establishIntervalMs,
+            config.useEncrypt,
+            config.useCompress,
+            config.qos
+        )
+        Log.d(TAG, "Session options: conns=${config.maxConnections} interval=${config.establishIntervalMs}ms " +
+                "encrypt=${config.useEncrypt} compress=${config.useCompress} qos=${config.qos}")
         // Build client info (rudpPort will be filled in by native code during RUDP init)
         val clientInfo = buildClientInfo(0)
         val result = try {
@@ -437,7 +447,10 @@ class ConnectionController(
                 config.username,
                 config.password,
                 hubName,
-                config.useTcp,
+                // The native "use_tcp" flag means "TCP-only, no UDP
+                // acceleration". UDP acceleration is on only when the profile
+                // leaves "Disable UDP Acceleration" unchecked.
+                !config.useUdp,
                 clientInfo.productName,
                 clientInfo.productVersion,
                 clientInfo.productBuild,
@@ -979,6 +992,14 @@ connectInFlight.set(true)
             val reconnectFullDuplex = DuplexModeSelector.resolve(service, config)
             client.setHalfConnection(!reconnectFullDuplex)
             Log.d(TAG, "Reconnect duplex mode: ${if (reconnectFullDuplex) "FULL" else "HALF"}")
+            // Re-apply SoftEther session options to the fresh reconnect handle.
+            client.setSessionOptions(
+                config.maxConnections,
+                config.establishIntervalMs,
+                config.useEncrypt,
+                config.useCompress,
+                config.qos
+            )
 
             // Connect to server (TLS + protocol + auth + session)
             startNativeStateMonitor()
@@ -991,7 +1012,8 @@ connectInFlight.set(true)
                     config.username,
                     config.password,
                     hubName,
-                    config.useTcp,
+                    // See performConnectInner: use_tcp means "TCP-only".
+                    !config.useUdp,
                     reconnectClientInfo.productName, reconnectClientInfo.productVersion, reconnectClientInfo.productBuild,
                     reconnectClientInfo.osName, reconnectClientInfo.osVersion, reconnectClientInfo.osProductId,
                     reconnectClientInfo.hostName, reconnectClientInfo.clientIpAddress, reconnectClientInfo.clientPort,

@@ -149,6 +149,13 @@ typedef struct softether_connection {
     uint32_t server_use_compress;  // 1 if server accepted compression
     uint32_t server_use_fast_rc4;
     uint32_t server_timeout;
+    // Client-requested session options, echoed in the login PACK. The server
+    // decides the final values (server_use_* above); these mirror the SoftEther
+    // Windows client's "Encrypt VPN Session with SSL" / "Use Data Compression" /
+    // "Disable VoIP / QoS Functions" checkboxes.
+    uint32_t req_use_encrypt;   // 1 = wrap the data channel in SSL (default 1)
+    uint32_t req_use_compress;  // 1 = ask for data compression (default 0)
+    uint32_t req_qos;           // 1 = keep VoIP / QoS functions (default 1)
     int use_ssl_data;  // 1 = SSL for data, 0 = raw TCP
     int session_established;    // 1 if Welcome PACK was parsed successfully
     int forced_auth_type;  // 0=auto-detect, 1=hashed password, 2=plain password (RADIUS)
@@ -235,6 +242,7 @@ typedef struct softether_connection {
     int max_connection;          // target max connections (sent in login PACK)
     int half_connection;         // 0 = bidirectional, 1 = unidirectional per socket
     int primary_direction;       // TCP_DIRECTION_* for primary socket (default BOTH)
+    uint32_t additional_connect_interval_ms;  // delay between additional-connect attempts (login-negotiated)
     uint64_t next_connect_time;  // monotonic timestamp for next additional connect attempt (ms)
     int additional_failed_count; // serial failure counter for additional connects
     // Background additional connection thread
@@ -364,6 +372,17 @@ void softether_set_auth_type(softether_connection_t* conn, int auth_type);
 // identity). Use a MAC derived from the server identity so reconnects keep a
 // stable L2 address on local-bridge servers.
 void softether_set_client_mac(softether_connection_t* conn, const uint8_t mac[6]);
+
+// Session / multi-connection options from the profile (SoftEther Windows client
+// equivalents). max_connection is clamped to [1, MAX_SE_CONNECTIONS]; the
+// interval is the delay between additional-connection attempts. use_encrypt,
+// use_compress and qos are the login-PACK request flags (see req_* above).
+void softether_set_session_options(softether_connection_t* conn,
+                                   int max_connection,
+                                   int additional_connect_interval_ms,
+                                   int use_encrypt,
+                                   int use_compress,
+                                   int qos);
 
 // DHCP result
 typedef struct {
