@@ -9,8 +9,9 @@ import '../services/vpngate_service.dart';
 import '../theme/app_theme.dart';
 import 'profile_settings_screen.dart';
 
-/// Lists the public MS-SSTP servers from VPN Gate and lets the user turn one
-/// into a profile. The username and password are always "vpn" / "vpn".
+/// Lists the public SSTP and SoftEther (SSL-VPN) servers from VPN Gate and lets
+/// the user turn one into a profile. The username and password are always
+/// "vpn" / "vpn".
 class PublicProfilesScreen extends StatefulWidget {
   const PublicProfilesScreen({super.key});
 
@@ -50,6 +51,9 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
   bool _onlyPort443 = false;
   final Set<String> _selectedCountries = {};
 
+  // Protocols to show. Empty means "all protocols".
+  final Set<String> _selectedProtocols = {};
+
   /// Whether servers already added to profiles are shown. Hidden by default.
   bool _showAdded = false;
 
@@ -67,7 +71,8 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
         set.add(entry.profile.countryKey);
       }
     }
-    final list = set.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final list = set.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return list;
   }
 
@@ -76,17 +81,20 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
   int get _activeFilterCount =>
       (_onlyPort443 ? 1 : 0) +
       (_selectedCountries.isNotEmpty ? 1 : 0) +
+      (_selectedProtocols.isNotEmpty ? 1 : 0) +
       (_showAdded ? 1 : 0);
 
-  /// Keys (`host:port`) of every server already present in the profile list.
-  Set<String> _addedKeys(VpnProvider provider) =>
-      provider.profiles.map((p) => '${p.host.trim().toLowerCase()}:${p.port}').toSet();
+  /// Keys (`protocol:host:port`) of every server already present as a profile.
+  Set<String> _addedKeys(VpnProvider provider) => provider.profiles
+      .map((p) => '${p.protocol}:${p.host.trim().toLowerCase()}:${p.port}')
+      .toSet();
 
   /// Resets every filter back to its default.
   void _resetFilters() {
     setState(() {
       _onlyPort443 = false;
       _selectedCountries.clear();
+      _selectedProtocols.clear();
       _showAdded = false;
     });
   }
@@ -96,6 +104,10 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
     return _entries.where((entry) {
       if (!_showAdded && addedKeys.contains(entry.profile.key)) return false;
       if (_onlyPort443 && entry.profile.port != 443) return false;
+      if (_selectedProtocols.isNotEmpty &&
+          !_selectedProtocols.contains(entry.profile.protocol)) {
+        return false;
+      }
       if (_selectedCountries.isNotEmpty &&
           !_selectedCountries.contains(entry.profile.countryKey)) {
         return false;
@@ -140,8 +152,10 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
         if (index >= _entries.length) return;
 
         final entry = _entries[index];
-        final ping = await _service
-            .measurePing(entry.profile.host, entry.profile.port);
+        final ping = await _service.measurePing(
+          entry.profile.host,
+          entry.profile.port,
+        );
         if (!mounted) return;
         setState(() {
           entry.pingMs = ping;
@@ -156,8 +170,12 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
   Future<void> _addProfile(PublicProfile server) async {
     final provider = context.read<VpnProvider>();
 
-    // Never add the same server twice (compared by host + port).
-    if (provider.hasProfileFor(server.host, server.port)) {
+    // Never add the same server twice (compared by protocol + host + port).
+    if (provider.hasProfileFor(
+      server.host,
+      server.port,
+      protocol: server.protocol,
+    )) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${server.displayHost} is already in your profiles'),
@@ -171,6 +189,9 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       // Default name is "CC - host[:port]"; the user can rename it in the editor.
       name: server.defaultName,
       isPublic: true,
+      protocol: server.protocol,
+      // VPN Gate public servers join the default virtual hub.
+      hubName: 'VPN',
       host: server.host,
       port: server.port,
       username: 'vpn',
@@ -205,17 +226,17 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
     int byFields(_ServerEntry a, _ServerEntry b) {
       switch (_sortKey) {
         case _SortKey.country:
-          final byCountry = a.profile.countryName
-              .toLowerCase()
-              .compareTo(b.profile.countryName.toLowerCase());
+          final byCountry = a.profile.countryName.toLowerCase().compareTo(
+            b.profile.countryName.toLowerCase(),
+          );
           if (byCountry != 0) return byCountry;
-          return a.profile.host
-              .toLowerCase()
-              .compareTo(b.profile.host.toLowerCase());
+          return a.profile.host.toLowerCase().compareTo(
+            b.profile.host.toLowerCase(),
+          );
         case _SortKey.host:
-          return a.profile.host
-              .toLowerCase()
-              .compareTo(b.profile.host.toLowerCase());
+          return a.profile.host.toLowerCase().compareTo(
+            b.profile.host.toLowerCase(),
+          );
         case _SortKey.quality:
           return a.profile.qualityMbps.compareTo(b.profile.qualityMbps);
         case _SortKey.ping:
@@ -308,10 +329,11 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
                             onPressed: _activeFilterCount == 0
                                 ? null
                                 : () => refresh(() {
-                                      _onlyPort443 = false;
-                                      _selectedCountries.clear();
-                                      _showAdded = false;
-                                    }),
+                                    _onlyPort443 = false;
+                                    _selectedCountries.clear();
+                                    _selectedProtocols.clear();
+                                    _showAdded = false;
+                                  }),
                             child: const Text('Reset'),
                           ),
                         ],
@@ -334,8 +356,7 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
                     ),
                     SwitchListTile(
                       value: _onlyPort443,
-                      onChanged: (value) =>
-                          refresh(() => _onlyPort443 = value),
+                      onChanged: (value) => refresh(() => _onlyPort443 = value),
                       title: Text(
                         'Port 443 only',
                         style: TextStyle(color: AppTheme.textPrimary),
@@ -346,6 +367,38 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
                           fontSize: 12,
                           color: AppTheme.textSecondary,
                         ),
+                      ),
+                    ),
+                    Divider(color: AppTheme.dividerColor, height: 12),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                      child: Text(
+                        'Protocol',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final protocol in VpnProtocol.values)
+                            FilterChip(
+                              label: Text(VpnProtocol.label(protocol)),
+                              selected: _selectedProtocols.contains(protocol),
+                              onSelected: (selected) => refresh(() {
+                                if (selected) {
+                                  _selectedProtocols.add(protocol);
+                                } else {
+                                  _selectedProtocols.remove(protocol);
+                                }
+                              }),
+                            ),
+                        ],
                       ),
                     ),
                     Divider(color: AppTheme.dividerColor, height: 12),
@@ -501,7 +554,7 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
     if (_entries.isEmpty) {
       return Center(
         child: Text(
-          'No public SSTP servers found.',
+          'No public servers found.',
           style: TextStyle(color: AppTheme.textSecondary),
         ),
       );
@@ -564,8 +617,8 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
           Expanded(
             child: Text(
               filtered
-                  ? '$shown of ${_entries.length} SSTP servers'
-                  : '${_entries.length} SSTP servers',
+                  ? '$shown of ${_entries.length} servers'
+                  : '${_entries.length} servers',
               style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
             ),
           ),
@@ -629,15 +682,23 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    server.displayHost,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.textPrimary,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          server.displayHost,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _protocolBadge(server.protocol),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   if (added)
@@ -671,11 +732,29 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
                 color: AppTheme.primaryColor.withValues(alpha: 0.6),
               )
             else
-              Icon(
-                Icons.add_circle_outline,
-                color: AppTheme.primaryColor,
-              ),
+              Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Small chip that tells SSTP and SoftEther servers apart in the list.
+  Widget _protocolBadge(String protocol) {
+    final isSoftether = protocol == VpnProtocol.softether;
+    final color = isSoftether ? AppTheme.primaryColor : AppTheme.textSecondary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        VpnProtocol.badge(protocol),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
         ),
       ),
     );
@@ -703,21 +782,17 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
     }
 
     final parts = <String>[];
+    parts.add(VpnProtocol.label(entry.profile.protocol));
     if (entry.profile.lineQuality.isNotEmpty) {
       parts.add(entry.profile.lineQuality);
     }
-    parts.add(
-      entry.pingMs == null ? 'Ping: n/a' : 'Ping: ${entry.pingMs} ms',
-    );
+    parts.add(entry.pingMs == null ? 'Ping: n/a' : 'Ping: ${entry.pingMs} ms');
 
     return Text(
       parts.join('  •  '),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: 13,
-        color: AppTheme.textSecondary,
-      ),
+      style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
     );
   }
 }

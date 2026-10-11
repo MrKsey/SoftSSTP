@@ -2,10 +2,11 @@
 
 [English](README.md) · **Русский**
 
-Открытый SSTP VPN-клиент для Android на Flutter, интерфейс в стиле Material Design 3.
-Работает с любым сервером, который поддерживает протокол Microsoft SSTP (MS-SSTP).
-Чаще всего это [SoftEther VPN Server](https://www.softether.org/) и
-[VPN Azure Cloud](https://www.vpnazure.net/).
+Открытый VPN-клиент для Android на Flutter, интерфейс в стиле Material Design 3.
+Понимает два протокола: Microsoft SSTP (MS-SSTP) и SoftEther (SSL-VPN поверх TCP).
+Работает с [SoftEther VPN Server](https://www.softether.org/),
+[VPN Azure Cloud](https://www.vpnazure.net/) и публичными серверами
+[VPN Gate](https://www.vpngate.net/).
 
 [![Build status](https://github.com/MrKsey/SoftSSTP/actions/workflows/release.yml/badge.svg)](https://github.com/MrKsey/SoftSSTP/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green.svg)
@@ -26,19 +27,24 @@
 |------|--------|------|
 | SSTP / PPP / TLS | [kittoku/Open-SSTP-Client](https://github.com/kittoku/Open-SSTP-Client) (MIT) | Исходный Android-клиент SSTP, отсюда взят движок протокола. |
 | Плагин Flutter | [NavidShokoufeh/sstp_flutter](https://github.com/NavidShokoufeh/sstp_flutter) | Flutter-обёртка над этим движком. |
+| SoftEther / SSL-VPN | [hoang-rio/SoftEther-Android-Module](https://github.com/hoang-rio/SoftEther-Android-Module) (Apache-2.0) | Встроенный в проект клиент SoftEther (ядро на C, JNI, Kotlin) для плагина `softether_flutter`. |
+| Криптография TLS | [OpenSSL](https://www.openssl.org/) (Apache-2.0) | Собирается из исходников для клиента SoftEther (см. `softether_flutter`). |
 | Базовое приложение | [CluvexStudio/ZedPass](https://github.com/CluvexStudio/ZedPass) | Проект, с которого начался форк. |
 
 ## Возможности
 
 - Material Design 3 с темой Material You. Дневной, ночной и авто режим, иконка в
   левом верхнем углу переключает между ними.
-- Несколько профилей VPN. В каждом свои сервер, DNS, прокси, PPP, маршрутизация,
-  раздельное туннелирование, автопереподключение и дополнительные параметры, плюс
-  имя и цвет иконки. Активный профиль выбирается на главном экране, новый
-  сохраняется по кнопке Save.
+- Несколько профилей VPN. В каждом свои протокол, сервер, DNS, прокси, PPP,
+  маршрутизация, раздельное туннелирование, автопереподключение и дополнительные
+  параметры, плюс имя и цвет иконки. Активный профиль выбирается на главном экране,
+  новый сохраняется по кнопке Save.
+- Два протокола на профиль: Microsoft SSTP и SoftEther (SSL-VPN поверх TCP). У
+  профиля SoftEther дополнительно задаётся виртуальный хаб (у серверов VPN Gate это
+  `VPN`, у своих профилей по умолчанию `DEFAULT`) и необязательный MAC-адрес клиента.
 - Публичные профили из VPN Gate. В списке видно страну, качество линии и пинг,
-  измеренный с вашего устройства. Любой сервер добавляется одним нажатием, логин и
-  пароль `vpn`.
+  измеренный с вашего устройства, а также фильтр по протоколу. Любой сервер
+  добавляется одним нажатием, логин и пароль `vpn`.
 - Подключение и отключение с контролем состояния на главном экране и в уведомлении.
 - Текущая скорость в битах и общий объём трафика в байтах.
 - Публичный IP и геолокация до и после подключения, плюс внутренний IP, который
@@ -58,7 +64,7 @@
 ## Требования
 
 - Android 8.0 (API 26) или новее
-- Доступный SSTP-сервер с включённым DHCP
+- Доступный SSTP- или SoftEther-сервер (SSL-VPN, TCP) с включённым DHCP
 - Только PAP и MS-CHAPv2, без EAP
 
 ## Установка
@@ -79,10 +85,15 @@
 
 1. Нажмите на шестерёнку, чтобы открыть Настройки. Блок Profiles добавляет,
    редактирует, включает и удаляет профили, там же лежат Diagnostics и About.
-2. Откройте профиль и укажите Хост, Порт (по умолчанию 443), Логин и Пароль. При
-   желании задайте имя и цвет иконки, затем нажмите Save.
+2. Откройте профиль и укажите Хост, Порт (по умолчанию 443), Логин и Пароль.
+   Выберите протокол: SSTP или SoftEther. Для SoftEther дополнительно задайте
+   виртуальный хаб (у серверов VPN Gate это `VPN`, у своих профилей по умолчанию
+   `DEFAULT`) и, при необходимости, MAC-адрес клиента.
+   При желании задайте имя и цвет иконки, затем нажмите Save.
 3. При необходимости настройте DNS, прокси, SSL, PPP, маршрутизацию и раздельное
-   туннелирование.
+   туннелирование. DNS, прокси, SSL и PPP относятся к SSTP, клиент SoftEther
+   подключается к SSL-VPN-порту сервера и их не использует. Маршрутизация и
+   раздельное туннелирование работают для обоих протоколов.
 4. Для готового сервера нажмите Add public profile и выберите один из списка
    VPN Gate.
 5. На главном экране нажмите на карточку сервера, чтобы сменить профиль, затем
@@ -118,9 +129,13 @@ SoftSSTP занимает VPN-слот, поэтому обычно вытесн
 ## Сборка из исходников
 
 ```bash
-# Требуется: Flutter (stable), JDK 17, Android SDK
+```bash
+# Требуется: Flutter (stable), JDK 17, Android SDK и NDK.
+# Плагин SoftEther во время сборки Gradle компилирует OpenSSL из исходников,
+# поэтому нужны ещё bash, perl и make (на Linux/macOS/CI они есть, на Windows
+# используйте WSL или Git Bash).
 
-git clone https://github.com/MrKsey/SoftSSTP.git
+git clone --recursive https://github.com/MrKsey/SoftSSTP.git
 cd SoftSSTP/SoftSSTP
 
 flutter pub get
@@ -132,6 +147,11 @@ flutter build apk --release
 # APK по архитектурам (arm64 и arm)
 flutter build apk --release --split-per-abi \
   --target-platform android-arm64,android-arm
+```
+
+Флаг `--recursive` подтягивает закреплённый сабмодуль OpenSSL, который нужен
+плагину `softether_flutter`. Если клонировали без него, выполните
+`git submodule update --init --recursive`.
 ```
 
 APK появятся в `build/app/outputs/apk/release/`.

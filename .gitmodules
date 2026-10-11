@@ -1,0 +1,6 @@
+[submodule "softether_flutter/android/src/main/cpp/openssl"]
+	path = softether_flutter/android/src/main/cpp/openssl
+	url = https://github.com/openssl/openssl.git
+	# Pinned to the OpenSSL release the vendored SoftEther client was built
+	# against (3.6.5). Cloned shallow to keep checkouts small.
+	shallow = true

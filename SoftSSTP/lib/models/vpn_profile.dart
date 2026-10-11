@@ -14,6 +14,25 @@ const List<Color> profileColors = [
   Color(0xFF8BC34A), // light green
 ];
 
+/// The VPN protocol a profile connects with.
+class VpnProtocol {
+  /// MS-SSTP over TLS (the app's original protocol).
+  static const String sstp = 'sstp';
+
+  /// SoftEther VPN (SSL-VPN) over TLS.
+  static const String softether = 'softether';
+
+  static const List<String> values = [sstp, softether];
+
+  /// Human readable label, e.g. "SSTP" or "SoftEther".
+  static String label(String value) =>
+      value == softether ? 'SoftEther' : 'SSTP';
+
+  /// Short badge label for server lists.
+  static String badge(String value) =>
+      value == softether ? 'SoftEther' : 'SSTP';
+}
+
 /// A named set of VPN settings.
 ///
 /// Everything that used to live in the single Settings screen (except the
@@ -27,6 +46,18 @@ class VpnProfile {
   /// True when the profile was created from the public VPN Gate list. Used to
   /// mark such profiles in the profile lists.
   bool isPublic;
+
+  // Protocol
+  /// Either [VpnProtocol.sstp] or [VpnProtocol.softether].
+  String protocol;
+
+  /// SoftEther virtual hub to join. Ignored for SSTP. VPN Gate public servers
+  /// use "VPN"; a hand-made profile targets the server default hub "DEFAULT".
+  String hubName;
+
+  /// Optional SoftEther client MAC ("AA:BB:CC:DD:EE:FF"). Ignored for SSTP.
+  /// Empty means the client derives a stable address from the server.
+  String clientMac;
 
   // Server
   String host;
@@ -79,6 +110,9 @@ class VpnProfile {
     this.name = '',
     this.colorIndex = 0,
     this.isPublic = false,
+    this.protocol = VpnProtocol.sstp,
+    this.hubName = 'DEFAULT',
+    this.clientMac = '',
     this.host = '',
     this.port = 443,
     this.username = '',
@@ -128,78 +162,84 @@ class VpnProfile {
       profileColors[colorIndex.clamp(0, profileColors.length - 1)];
 
   VpnProfile copy() => VpnProfile(
-        id: id,
-        name: name,
-        colorIndex: colorIndex,
-        isPublic: isPublic,
-        host: host,
-        port: port,
-        username: username,
-        password: password,
-        dns: dns,
-        dnsEnabled: dnsEnabled,
-        requestDns: requestDns,
-        proxyHost: proxyHost,
-        proxyPort: proxyPort,
-        proxyEnabled: proxyEnabled,
-        pppMtu: pppMtu,
-        pppMru: pppMru,
-        authProtocol: authProtocol,
-        authTimeout: authTimeout,
-        ipv4Enabled: ipv4Enabled,
-        ipv6Enabled: ipv6Enabled,
-        requestStaticIp: requestStaticIp,
-        staticIp: staticIp,
-        addDefaultRoute: addDefaultRoute,
-        routePrivateAddresses: routePrivateAddresses,
-        appBasedEnabled: appBasedEnabled,
-        allowedApps: allowedApps,
-        reconnectionEnabled: reconnectionEnabled,
-        reconnectionCount: reconnectionCount,
-        reconnectionInterval: reconnectionInterval,
-        verifyHostName: verifyHostName,
-        verifySSLCert: verifySSLCert,
-        sslVersion: sslVersion,
-        useCustomSni: useCustomSni,
-        customSni: customSni,
-      );
+    id: id,
+    name: name,
+    colorIndex: colorIndex,
+    isPublic: isPublic,
+    protocol: protocol,
+    hubName: hubName,
+    clientMac: clientMac,
+    host: host,
+    port: port,
+    username: username,
+    password: password,
+    dns: dns,
+    dnsEnabled: dnsEnabled,
+    requestDns: requestDns,
+    proxyHost: proxyHost,
+    proxyPort: proxyPort,
+    proxyEnabled: proxyEnabled,
+    pppMtu: pppMtu,
+    pppMru: pppMru,
+    authProtocol: authProtocol,
+    authTimeout: authTimeout,
+    ipv4Enabled: ipv4Enabled,
+    ipv6Enabled: ipv6Enabled,
+    requestStaticIp: requestStaticIp,
+    staticIp: staticIp,
+    addDefaultRoute: addDefaultRoute,
+    routePrivateAddresses: routePrivateAddresses,
+    appBasedEnabled: appBasedEnabled,
+    allowedApps: allowedApps,
+    reconnectionEnabled: reconnectionEnabled,
+    reconnectionCount: reconnectionCount,
+    reconnectionInterval: reconnectionInterval,
+    verifyHostName: verifyHostName,
+    verifySSLCert: verifySSLCert,
+    sslVersion: sslVersion,
+    useCustomSni: useCustomSni,
+    customSni: customSni,
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'colorIndex': colorIndex,
-        'isPublic': isPublic,
-        'host': host,
-        'port': port,
-        'username': username,
-        'password': password,
-        'dns': dns,
-        'dnsEnabled': dnsEnabled,
-        'requestDns': requestDns,
-        'proxyHost': proxyHost,
-        'proxyPort': proxyPort,
-        'proxyEnabled': proxyEnabled,
-        'pppMtu': pppMtu,
-        'pppMru': pppMru,
-        'authProtocol': authProtocol,
-        'authTimeout': authTimeout,
-        'ipv4Enabled': ipv4Enabled,
-        'ipv6Enabled': ipv6Enabled,
-        'requestStaticIp': requestStaticIp,
-        'staticIp': staticIp,
-        'addDefaultRoute': addDefaultRoute,
-        'routePrivateAddresses': routePrivateAddresses,
-        'appBasedEnabled': appBasedEnabled,
-        'allowedApps': allowedApps,
-        'reconnectionEnabled': reconnectionEnabled,
-        'reconnectionCount': reconnectionCount,
-        'reconnectionInterval': reconnectionInterval,
-        'verifyHostName': verifyHostName,
-        'verifySSLCert': verifySSLCert,
-        'sslVersion': sslVersion,
-        'useCustomSni': useCustomSni,
-        'customSni': customSni,
-      };
+    'id': id,
+    'name': name,
+    'colorIndex': colorIndex,
+    'isPublic': isPublic,
+    'protocol': protocol,
+    'hubName': hubName,
+    'clientMac': clientMac,
+    'host': host,
+    'port': port,
+    'username': username,
+    'password': password,
+    'dns': dns,
+    'dnsEnabled': dnsEnabled,
+    'requestDns': requestDns,
+    'proxyHost': proxyHost,
+    'proxyPort': proxyPort,
+    'proxyEnabled': proxyEnabled,
+    'pppMtu': pppMtu,
+    'pppMru': pppMru,
+    'authProtocol': authProtocol,
+    'authTimeout': authTimeout,
+    'ipv4Enabled': ipv4Enabled,
+    'ipv6Enabled': ipv6Enabled,
+    'requestStaticIp': requestStaticIp,
+    'staticIp': staticIp,
+    'addDefaultRoute': addDefaultRoute,
+    'routePrivateAddresses': routePrivateAddresses,
+    'appBasedEnabled': appBasedEnabled,
+    'allowedApps': allowedApps,
+    'reconnectionEnabled': reconnectionEnabled,
+    'reconnectionCount': reconnectionCount,
+    'reconnectionInterval': reconnectionInterval,
+    'verifyHostName': verifyHostName,
+    'verifySSLCert': verifySSLCert,
+    'sslVersion': sslVersion,
+    'useCustomSni': useCustomSni,
+    'customSni': customSni,
+  };
 
   factory VpnProfile.fromJson(Map<String, dynamic> json) {
     return VpnProfile(
@@ -207,6 +247,9 @@ class VpnProfile {
       name: (json['name'] ?? '') as String,
       colorIndex: (json['colorIndex'] as num?)?.toInt() ?? 0,
       isPublic: (json['isPublic'] as bool?) ?? false,
+      protocol: (json['protocol'] ?? VpnProtocol.sstp) as String,
+      hubName: (json['hubName'] ?? 'DEFAULT') as String,
+      clientMac: (json['clientMac'] ?? '') as String,
       host: (json['host'] ?? '') as String,
       port: (json['port'] as num?)?.toInt() ?? 443,
       username: (json['username'] ?? '') as String,

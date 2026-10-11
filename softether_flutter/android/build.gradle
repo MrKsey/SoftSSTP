@@ -1,0 +1,165 @@
+group 'com.example.softether_flutter'
+version '1.0-SNAPSHOT'
+
+buildscript {
+    ext.kotlin_version = '2.2.20'
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+// ---------------------------------------------------------------------------
+// OpenSSL from source (F-Droid requirement: no prebuilt binaries may be
+// committed). The native module needs static libssl.a / libcrypto.a per ABI.
+//
+// `buildOpenSsl` runs the vendored script, which cross-compiles OpenSSL with the
+// NDK and drops the archives into src/main/jniLibs/<abi>/. It is skipped when
+// the archives and generated headers are already present and newer than the
+// pinned OpenSSL sources, so incremental builds stay fast.
+//
+// Override the built ABIs with -PsoftetherAbis=arm64-v8a,armeabi-v7a,x86_64.
+// Requires bash, perl and make on PATH (Linux/macOS/CI/F-Droid; on Windows use
+// Git Bash or WSL, or place prebuilt archives into src/main/jniLibs manually).
+// ---------------------------------------------------------------------------
+def softetherAbis = (project.findProperty('softetherAbis')
+        ?: 'arm64-v8a,armeabi-v7a').split(',').collect { it.trim() }.findAll { it }
+def openSslDir = file('src/main/cpp/openssl')
+def openSslBuildDir = file('src/main/cpp/openssl-build')
+def jniLibsDir = file('src/main/jniLibs')
+
+tasks.register('buildOpenSsl') {
+    description = 'Cross-compiles OpenSSL for the requested Android ABIs'
+    group = 'build'
+
+    // Declare outputs so Gradle can skip the task when nothing changed.
+    outputs.files(softetherAbis.collect { new File(jniLibsDir, "$it/libssl.a") })
+    outputs.files(softetherAbis.collect { new File(jniLibsDir, "$it/libcrypto.a") })
+    outputs.files(softetherAbis.collect {
+        new File(openSslBuildDir, "$it/include/openssl/configuration.h")
+    })
+
+    onlyIf {
+        // Rebuild when any archive or the ABI-specific generated configuration
+        // header is missing.
+        def missing = softetherAbis.any { abi ->
+            !new File(jniLibsDir, "$abi/libssl.a").exists() ||
+            !new File(jniLibsDir, "$abi/libcrypto.a").exists() ||
+            !new File(openSslBuildDir, "$abi/include/openssl/configuration.h").exists()
+        }
+        if (!missing) {
+            logger.lifecycle("OpenSSL archives already present - skipping source build")
+        }
+        missing
+    }
+
+    doLast {
+        if (!openSslDir.exists()) {
+            throw new GradleException(
+                "OpenSSL sources not found at ${openSslDir}. Run " +
+                "'git submodule update --init --recursive' in the repository root.")
+        }
+        def script = file('src/main/cpp/build-openssl-android.sh')
+        // The script needs the NDK root; resolve it from the Android SDK.
+        def ndkRoot = new File(android.sdkDirectory, "ndk/${android.ndkVersion}")
+        if (!ndkRoot.exists()) {
+            throw new GradleException(
+                "Android NDK ${android.ndkVersion} not found at ${ndkRoot}.")
+        }
+        softetherAbis.each { abi ->
+            logger.lifecycle("Building OpenSSL for ${abi} ...")
+            exec {
+                workingDir file('src/main/cpp')
+                environment 'ANDROID_NDK_ROOT', ndkRoot.absolutePath
+                commandLine 'bash', script.absolutePath, abi
+            }
+        }
+    }
+}
+
+// Make the native configure step wait for the OpenSSL archives.
+tasks.configureEach { task ->
+    if (task.name.startsWith('configureCMake') || task.name == 'externalNativeBuildCleanDebug') {
+        task.dependsOn 'buildOpenSsl'
+    }
+}
+
+android {
+    compileSdk 36
+    ndkVersion '28.2.13676358'
+    if (project.android.hasProperty('namespace')) {
+        // Matches the vendored module so its code can resolve the generated R
+        // class (resources live in src/main/res).
+        namespace 'vn.unlimit.softether'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        minSdkVersion 26
+
+        // The native module links the OpenSSL archives built for exactly these
+        // ABIs, so the CMake build must not target any other one. Override with
+        // -PsoftetherAbis=arm64-v8a,armeabi-v7a,x86_64,x86 (the OpenSSL build
+        // then covers those ABIs too).
+        ndk {
+            softetherAbis.each { abi -> abiFilters abi }
+        }
+
+        externalNativeBuild {
+            cmake {
+                cFlags '-O2 -fPIC'
+                cppFlags '-O2 -fPIC -std=c++17'
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+        }
+    }
+
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    cFlags '-O0 -g'
+                    cppFlags '-O0 -g'
+                }
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.18.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+}

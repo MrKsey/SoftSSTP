@@ -11,18 +11,14 @@ import 'package:sstp_flutter/ios_configuration_sstp.dart';
 import 'package:sstp_flutter/traffic.dart';
 import 'package:sstp_flutter/ssl_versions.dart';
 import 'package:sstp_flutter/proxy.dart';
+import 'package:softether_flutter/softether_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/app_list_preset.dart';
 import '../models/vpn_profile.dart';
 import '../services/network_monitor.dart';
 
-enum VpnStatus {
-  disconnected,
-  connecting,
-  reconnecting,
-  connected,
-}
+enum VpnStatus { disconnected, connecting, reconnecting, connected }
 
 /// Public IP together with its geolocation, as resolved from an external
 /// lookup service.
@@ -42,6 +38,7 @@ class IpGeoInfo {
 
 class VpnProvider extends ChangeNotifier {
   final SstpFlutter _sstpFlutter = SstpFlutter();
+  final SoftetherFlutter _softether = SoftetherFlutter();
 
   // Profiles. The scalar settings below always mirror the active profile.
   List<VpnProfile> _profiles = [];
@@ -49,6 +46,12 @@ class VpnProvider extends ChangeNotifier {
   String _activeName = '';
   int _activeColorIndex = 0;
   bool _activeIsPublic = false;
+
+  // Protocol mirrored from the active profile. [VpnProtocol.sstp] routes to the
+  // sstp_flutter plugin, [VpnProtocol.softether] to softether_flutter.
+  String _protocol = VpnProtocol.sstp;
+  String _hubName = 'DEFAULT';
+  String _clientMac = '';
 
   VpnStatus _status = VpnStatus.disconnected;
   String _statusMessage = '';
@@ -144,6 +147,19 @@ class VpnProvider extends ChangeNotifier {
   int get port => _port;
   String get username => _username;
   String get password => _password;
+
+  /// Active protocol: [VpnProtocol.sstp] or [VpnProtocol.softether].
+  String get protocol => _protocol;
+
+  /// SoftEther virtual hub (ignored for SSTP).
+  String get hubName => _hubName;
+
+  /// Optional SoftEther client MAC (ignored for SSTP).
+  String get clientMac => _clientMac;
+
+  /// True when the active profile uses SoftEther.
+  bool get isSoftether => _protocol == VpnProtocol.softether;
+
   Duration get connectionDuration => _connectionDuration;
   int get downloadSpeed => _downloadSpeed;
   int get uploadSpeed => _uploadSpeed;
@@ -222,6 +238,7 @@ class VpnProvider extends ChangeNotifier {
         return 'TLS default';
     }
   }
+
   bool get useCustomSni => _useCustomSni;
   String get customSni => _customSni;
   bool get connectionLogEnabled => _connectionLogEnabled;
@@ -249,7 +266,8 @@ class VpnProvider extends ChangeNotifier {
 
   /// Saved app selections that can be applied to any profile.
   List<AppListPreset> get appPresets => List.unmodifiable(_appPresets);
-  bool get isConfigured => _host.isNotEmpty && _username.isNotEmpty && _password.isNotEmpty;
+  bool get isConfigured =>
+      _host.isNotEmpty && _username.isNotEmpty && _password.isNotEmpty;
 
   // --- Profiles ----------------------------------------------------------
 
@@ -281,7 +299,9 @@ class VpnProvider extends ChangeNotifier {
   /// without the user having to restart the app.
   void _onNetworkChanged() {
     final now = DateTime.now();
-    if (now.difference(_lastNetworkRefresh) < const Duration(seconds: 3)) return;
+    if (now.difference(_lastNetworkRefresh) < const Duration(seconds: 3)) {
+      return;
+    }
     _lastNetworkRefresh = now;
 
     if (_status == VpnStatus.disconnected) {
@@ -292,98 +312,156 @@ class VpnProvider extends ChangeNotifier {
   void _initializeListener() {
     _sstpFlutter.onResult(
       onConnectedResult: (ConnectionTraffic traffic, Duration duration) {
-        final wasConnected = _status == VpnStatus.connected;
-        _status = VpnStatus.connected;
-        // The tunnel is up, so any Auto negotiation is finished.
-        _negotiating = false;
-        _autoRetryScheduled = false;
-        _statusMessage = '';
-        _connectionDuration = duration;
-        _downloadSpeed = traffic.downloadTraffic ?? 0;
-        _uploadSpeed = traffic.uploadTraffic ?? 0;
-        // Use the native cumulative counters instead of summing the per-second
-        // deltas here. The native counters are authoritative, so nothing is
-        // lost while the app is backgrounded (e.g. during a speed test).
-        _totalDownload = traffic.totalDownloadTraffic ?? _totalDownload;
-        _totalUpload = traffic.totalUploadTraffic ?? _totalUpload;
-        notifyListeners();
-
-        // Fetch the exit IP once per connection, after routes have settled.
-        if (!wasConnected) {
-          _ipGeneration++;
-          _exitIpRetryRound = 0;
-          Future.delayed(const Duration(seconds: 2), refreshExternalIp);
-        }
+        _applyConnectedState(
+          downloadSpeed: traffic.downloadTraffic ?? 0,
+          uploadSpeed: traffic.uploadTraffic ?? 0,
+          totalDownload: traffic.totalDownloadTraffic,
+          totalUpload: traffic.totalUploadTraffic,
+          duration: duration,
+        );
       },
-      onConnectingResult: () {
-        _status = VpnStatus.connecting;
-        // Keep the "trying another TLS/auth option" notice visible while the
-        // next candidate is being attempted.
-        if (!_negotiating) _statusMessage = '';
-        _errorMessage = '';
-        _errorCode = '';
-        // A new attempt invalidates any lookup still running for the previous
-        // state and drops the stale exit address, so "Via VPN" never shows the
-        // address of the tunnel we are switching away from.
-        _ipGeneration++;
-        _externalIpAfter = '';
-        _afterLocation = '';
-        _exitIpRetryRound = 0;
-        notifyListeners();
-      },
-      onReconnectingResult: (String message) {
-        _status = VpnStatus.reconnecting;
-        _statusMessage = message;
-        _downloadSpeed = 0;
-        _uploadSpeed = 0;
-        notifyListeners();
-      },
-      onDisconnectedResult: () {
-        _status = VpnStatus.disconnected;
-        _statusMessage = '';
-        _downloadSpeed = 0;
-        _uploadSpeed = 0;
-        _connectionDuration = Duration.zero;
-        _totalDownload = 0;
-        _totalUpload = 0;
-        _internalIp = '';
-        // The VPN exit address only exists while the tunnel is up.
-        _externalIpAfter = '';
-        _afterLocation = '';
-        // Invalidate lookups that were started while the tunnel was up.
-        _ipGeneration++;
-        notifyListeners();
-        _persistIpState();
-        saveTrafficTotals();
-        // Refresh the direct IP so the "before" value is up to date.
-        refreshExternalIp();
-      },
-      onError: () {
-        _status = VpnStatus.disconnected;
-        notifyListeners();
-      },
-      onConnectionErrorResult: (String code, String message) {
-        _status = VpnStatus.disconnected;
-        _errorCode = code;
-        _errorMessage = message;
-        _internalIp = '';
-        _externalIpAfter = '';
-        _afterLocation = '';
-        _ipGeneration++;
-        notifyListeners();
-        _persistIpState();
-        _handleConnectionFailure(code);
-      },
-      onAssignedIpResult: (String ip) {
-        _internalIp = ip;
-        notifyListeners();
-        _persistIpState();
-        // The assigned address means IPCP has completed, i.e. the tunnel is
-        // fully up and its routes are in place. That is the most reliable moment
-        // to look up the exit address, so do not rely on a fixed delay alone.
-        Future.delayed(const Duration(seconds: 1), refreshExternalIp);
-      },
+      onConnectingResult: _applyConnectingState,
+      onReconnectingResult: _applyReconnectingState,
+      onDisconnectedResult: _applyDisconnectedState,
+      onError: _applyErrorState,
+      onConnectionErrorResult: _applyConnectionErrorState,
+      onAssignedIpResult: _applyAssignedIpState,
     );
+    // SoftEther reports traffic in bits per second and without a duration, so
+    // the tunnel uptime is tracked here.
+    _softether.onResult(
+      onConnected: (down, up, totalDown, totalUp) {
+        _applyConnectedState(
+          downloadSpeed: down,
+          uploadSpeed: up,
+          totalDownload: totalDown,
+          totalUpload: totalUp,
+          duration: _softetherDuration,
+        );
+      },
+      onConnecting: _applyConnectingState,
+      onReconnecting: _applyReconnectingState,
+      onDisconnected: _applyDisconnectedState,
+      onConnectionError: _applyConnectionErrorState,
+      onAssignedIp: _applyAssignedIpState,
+    );
+  }
+
+  /// When the current tunnel was established, used to compute the uptime for
+  /// protocols that do not report one themselves.
+  DateTime? _softetherConnectedAt;
+
+  Duration get _softetherDuration {
+    final at = _softetherConnectedAt;
+    return at == null ? Duration.zero : DateTime.now().difference(at);
+  }
+
+  void _applyConnectedState({
+    required int downloadSpeed,
+    required int uploadSpeed,
+    required int? totalDownload,
+    required int? totalUpload,
+    required Duration duration,
+  }) {
+    final wasConnected = _status == VpnStatus.connected;
+    _status = VpnStatus.connected;
+    // The tunnel is up, so any Auto negotiation is finished.
+    _negotiating = false;
+    _autoRetryScheduled = false;
+    _statusMessage = '';
+    _connectionDuration = duration;
+    _downloadSpeed = downloadSpeed;
+    _uploadSpeed = uploadSpeed;
+    // Use the native cumulative counters instead of summing the per-second
+    // deltas here. The native counters are authoritative, so nothing is
+    // lost while the app is backgrounded (e.g. during a speed test).
+    _totalDownload = totalDownload ?? _totalDownload;
+    _totalUpload = totalUpload ?? _totalUpload;
+    if (!wasConnected) _softetherConnectedAt = DateTime.now();
+    notifyListeners();
+
+    // Fetch the exit IP once per connection, after routes have settled.
+    if (!wasConnected) {
+      _ipGeneration++;
+      _exitIpRetryRound = 0;
+      Future.delayed(const Duration(seconds: 2), refreshExternalIp);
+    }
+  }
+
+  void _applyConnectingState() {
+    _status = VpnStatus.connecting;
+    // Keep the "trying another TLS/auth option" notice visible while the
+    // next candidate is being attempted.
+    if (!_negotiating) _statusMessage = '';
+    _errorMessage = '';
+    _errorCode = '';
+    // A new attempt invalidates any lookup still running for the previous
+    // state and drops the stale exit address, so "Via VPN" never shows the
+    // address of the tunnel we are switching away from.
+    _ipGeneration++;
+    _externalIpAfter = '';
+    _afterLocation = '';
+    _exitIpRetryRound = 0;
+    notifyListeners();
+  }
+
+  void _applyReconnectingState(String message) {
+    _status = VpnStatus.reconnecting;
+    _statusMessage = message;
+    _downloadSpeed = 0;
+    _uploadSpeed = 0;
+    notifyListeners();
+  }
+
+  void _applyDisconnectedState() {
+    _status = VpnStatus.disconnected;
+    _statusMessage = '';
+    _downloadSpeed = 0;
+    _uploadSpeed = 0;
+    _connectionDuration = Duration.zero;
+    _totalDownload = 0;
+    _totalUpload = 0;
+    _internalIp = '';
+    _softetherConnectedAt = null;
+    // The VPN exit address only exists while the tunnel is up.
+    _externalIpAfter = '';
+    _afterLocation = '';
+    // Invalidate lookups that were started while the tunnel was up.
+    _ipGeneration++;
+    notifyListeners();
+    _persistIpState();
+    saveTrafficTotals();
+    // Refresh the direct IP so the "before" value is up to date.
+    refreshExternalIp();
+  }
+
+  void _applyErrorState() {
+    _status = VpnStatus.disconnected;
+    notifyListeners();
+  }
+
+  void _applyConnectionErrorState(String code, String message) {
+    _status = VpnStatus.disconnected;
+    _errorCode = code;
+    _errorMessage = message;
+    _internalIp = '';
+    _softetherConnectedAt = null;
+    _externalIpAfter = '';
+    _afterLocation = '';
+    _ipGeneration++;
+    notifyListeners();
+    _persistIpState();
+    _handleConnectionFailure(code);
+  }
+
+  void _applyAssignedIpState(String ip) {
+    _internalIp = ip;
+    notifyListeners();
+    _persistIpState();
+    // The assigned address means IPCP has completed, i.e. the tunnel is
+    // fully up and its routes are in place. That is the most reliable moment
+    // to look up the exit address, so do not rely on a fixed delay alone.
+    Future.delayed(const Duration(seconds: 1), refreshExternalIp);
   }
 
   // --- Profile helpers ---------------------------------------------------
@@ -404,41 +482,44 @@ class VpnProvider extends ChangeNotifier {
 
   /// Builds a profile snapshot from the current working settings.
   VpnProfile _captureActiveProfile() => VpnProfile(
-        id: _activeProfileId,
-        name: _activeName,
-        colorIndex: _activeColorIndex,
-        isPublic: _activeIsPublic,
-        host: _host,
-        port: _port,
-        username: _username,
-        password: _password,
-        dns: _dns,
-        dnsEnabled: _dnsEnabled,
-        requestDns: _requestDns,
-        proxyHost: _proxyHost,
-        proxyPort: _proxyPort,
-        proxyEnabled: _proxyEnabled,
-        pppMtu: _pppMtu,
-        pppMru: _pppMru,
-        authProtocol: _authProtocol,
-        authTimeout: _authTimeout,
-        ipv4Enabled: _ipv4Enabled,
-        ipv6Enabled: _ipv6Enabled,
-        requestStaticIp: _requestStaticIp,
-        staticIp: _staticIp,
-        addDefaultRoute: _addDefaultRoute,
-        routePrivateAddresses: _routePrivateAddresses,
-        appBasedEnabled: _appBasedEnabled,
-        allowedApps: _allowedApps,
-        reconnectionEnabled: _reconnectionEnabled,
-        reconnectionCount: _reconnectionCount,
-        reconnectionInterval: _reconnectionInterval,
-        verifyHostName: _verifyHostName,
-        verifySSLCert: _verifySSLCert,
-        sslVersion: _sslVersion,
-        useCustomSni: _useCustomSni,
-        customSni: _customSni,
-      );
+    id: _activeProfileId,
+    name: _activeName,
+    colorIndex: _activeColorIndex,
+    isPublic: _activeIsPublic,
+    protocol: _protocol,
+    hubName: _hubName,
+    clientMac: _clientMac,
+    host: _host,
+    port: _port,
+    username: _username,
+    password: _password,
+    dns: _dns,
+    dnsEnabled: _dnsEnabled,
+    requestDns: _requestDns,
+    proxyHost: _proxyHost,
+    proxyPort: _proxyPort,
+    proxyEnabled: _proxyEnabled,
+    pppMtu: _pppMtu,
+    pppMru: _pppMru,
+    authProtocol: _authProtocol,
+    authTimeout: _authTimeout,
+    ipv4Enabled: _ipv4Enabled,
+    ipv6Enabled: _ipv6Enabled,
+    requestStaticIp: _requestStaticIp,
+    staticIp: _staticIp,
+    addDefaultRoute: _addDefaultRoute,
+    routePrivateAddresses: _routePrivateAddresses,
+    appBasedEnabled: _appBasedEnabled,
+    allowedApps: _allowedApps,
+    reconnectionEnabled: _reconnectionEnabled,
+    reconnectionCount: _reconnectionCount,
+    reconnectionInterval: _reconnectionInterval,
+    verifyHostName: _verifyHostName,
+    verifySSLCert: _verifySSLCert,
+    sslVersion: _sslVersion,
+    useCustomSni: _useCustomSni,
+    customSni: _customSni,
+  );
 
   /// Copies [profile] into the working settings.
   void _applyProfile(VpnProfile profile) {
@@ -446,6 +527,9 @@ class VpnProvider extends ChangeNotifier {
     _activeName = profile.name;
     _activeColorIndex = profile.colorIndex;
     _activeIsPublic = profile.isPublic;
+    _protocol = profile.protocol;
+    _hubName = profile.hubName;
+    _clientMac = profile.clientMac;
     _host = profile.host;
     _port = profile.port;
     _username = profile.username;
@@ -516,12 +600,19 @@ class VpnProvider extends ChangeNotifier {
   /// Generates a fresh, unused profile id.
   String newProfileId() => _newProfileId();
 
-  /// True when a profile for [host]:[port] already exists. Used to avoid adding
-  /// the same public server to the list twice.
-  bool hasProfileFor(String host, int port) {
+  /// True when a profile for [host]:[port] using [protocol] already exists. Used
+  /// to avoid adding the same public server to the list twice.
+  bool hasProfileFor(
+    String host,
+    int port, {
+    String protocol = VpnProtocol.sstp,
+  }) {
     final normalized = host.trim().toLowerCase();
     return _profiles.any(
-      (p) => p.host.trim().toLowerCase() == normalized && p.port == port,
+      (p) =>
+          p.host.trim().toLowerCase() == normalized &&
+          p.port == port &&
+          p.protocol == protocol,
     );
   }
 
@@ -558,7 +649,8 @@ class VpnProvider extends ChangeNotifier {
 
     var needsReconnect = false;
     if (isActive) {
-      needsReconnect = previous != null && _tunnelSettingsChanged(previous, updated);
+      needsReconnect =
+          previous != null && _tunnelSettingsChanged(previous, updated);
       _applyProfile(updated);
       await _applyAppRoutingToNative();
     }
@@ -578,7 +670,10 @@ class VpnProvider extends ChangeNotifier {
 
   /// True when a change between [a] and [b] requires rebuilding the tunnel.
   bool _tunnelSettingsChanged(VpnProfile a, VpnProfile b) {
-    return a.host != b.host ||
+    return a.protocol != b.protocol ||
+        a.hubName != b.hubName ||
+        a.clientMac != b.clientMac ||
+        a.host != b.host ||
         a.port != b.port ||
         a.username != b.username ||
         a.password != b.password ||
@@ -667,8 +762,10 @@ class VpnProvider extends ChangeNotifier {
     Set<String>? installedPackages;
     final installedApps = await getInstalledApps();
     if (installedApps.isNotEmpty) {
-      installedPackages =
-          installedApps.map((app) => app.packageName).whereType<String>().toSet();
+      installedPackages = installedApps
+          .map((app) => app.packageName)
+          .whereType<String>()
+          .toSet();
     }
 
     for (final profile in incoming) {
@@ -676,8 +773,9 @@ class VpnProvider extends ChangeNotifier {
       json['id'] = _freshProfileId();
       final imported = VpnProfile.fromJson(json);
       if (installedPackages != null) {
-        imported.allowedApps =
-            imported.allowedApps.where(installedPackages.contains).toList();
+        imported.allowedApps = imported.allowedApps
+            .where(installedPackages.contains)
+            .toList();
       }
       _profiles.add(imported);
     }
@@ -974,8 +1072,8 @@ class VpnProvider extends ChangeNotifier {
     required bool enabled,
     required List<String> packages,
   }) async {
-    final changed = enabled != _appBasedEnabled ||
-        !_samePackages(_allowedApps, packages);
+    final changed =
+        enabled != _appBasedEnabled || !_samePackages(_allowedApps, packages);
 
     try {
       await _sstpFlutter.setAppBasedRule(enabled: enabled, packages: packages);
@@ -1033,11 +1131,9 @@ class VpnProvider extends ChangeNotifier {
     if (idx >= 0) {
       _appPresets[idx].packages = List<String>.from(packages);
     } else {
-      _appPresets.add(AppListPreset(
-        id: _newProfileId(),
-        name: trimmed,
-        packages: packages,
-      ));
+      _appPresets.add(
+        AppListPreset(id: _newProfileId(), name: trimmed, packages: packages),
+      );
     }
     await _persistAppPresets();
     notifyListeners();
@@ -1077,11 +1173,16 @@ class VpnProvider extends ChangeNotifier {
 
   Future<bool> requestPermission() async {
     try {
-      return await _sstpFlutter.takePermission();
+      return await (_isSoftetherActive
+          ? _softether.takePermission()
+          : _sstpFlutter.takePermission());
     } catch (e) {
       return false;
     }
   }
+
+  /// True when the tunnel that is (or is about to be) active uses SoftEther.
+  bool get _isSoftetherActive => _protocol == VpnProtocol.softether;
 
   /// True when the system has exempted SoftSSTP from battery optimization.
   Future<bool> isIgnoringBatteryOptimizations() =>
@@ -1159,25 +1260,26 @@ class VpnProvider extends ChangeNotifier {
       _errorMessage = tlsAuto
           ? 'The server rejected every TLS version SoftSSTP tried (1.3 → 1.0).'
           : 'The server rejected $sslVersionLabel. This profile pins a single '
-              'TLS version — set SSL Version to Auto so SoftSSTP can pick one the '
-              'server supports.';
+                'TLS version — set SSL Version to Auto so SoftSSTP can pick one the '
+                'server supports.';
     } else if (code == 'PPP_AUTH_FAILED') {
       _errorCode = code;
       _errorMessage = authAuto
           ? 'The server rejected every authentication protocol SoftSSTP tried '
-              '(MSCHAPv2, PAP).'
+                '(MSCHAPv2, PAP).'
           : 'The server rejected the $_authProtocol authentication protocol. '
-              'Set Authentication to Auto so SoftSSTP can try another protocol.';
+                'Set Authentication to Auto so SoftSSTP can try another protocol.';
     } else if (code == 'IPCP_FAILED') {
       _errorCode = code;
       _errorMessage = _requestStaticIp
           ? 'The server rejected the static IP address "$_staticIp". Disable the '
-              'static address (request it automatically) or use another server.'
+                'static address (request it automatically) or use another server.'
           : 'The server could not assign an IP address for this session. This is '
-              'usually temporary — try again or pick another server.';
+                'usually temporary — try again or pick another server.';
     } else if (code == 'NO_ADDRESS_FAMILY') {
       _errorCode = code;
-      _errorMessage = 'This profile has neither IPv4 nor IPv6 enabled. Turn on '
+      _errorMessage =
+          'This profile has neither IPv4 nor IPv6 enabled. Turn on '
           'IPv4 (or IPv6) in the profile settings and try again.';
     }
     // Giving up: leave the negotiation state so a later connect() starts clean.
@@ -1242,6 +1344,11 @@ class VpnProvider extends ChangeNotifier {
       await saveTrafficTotals();
       notifyListeners();
 
+      if (_isSoftetherActive) {
+        await _startSoftetherConnection();
+        return;
+      }
+
       SSTPServer server = SSTPServer(
         host: _host,
         port: _port,
@@ -1292,10 +1399,7 @@ class VpnProvider extends ChangeNotifier {
 
       if (_proxyEnabled && _proxyHost.isNotEmpty) {
         await _sstpFlutter.enableProxy(
-          proxy: SSTPProxy(
-            ip: _proxyHost,
-            port: _proxyPort.toString(),
-          ),
+          proxy: SSTPProxy(ip: _proxyHost, port: _proxyPort.toString()),
         );
       }
 
@@ -1308,23 +1412,51 @@ class VpnProvider extends ChangeNotifier {
     }
   }
 
+  /// Builds the SoftEther server descriptor and asks the plugin to connect.
+  Future<void> _startSoftetherConnection() async {
+    // The app's App Routing is an allow-list ("only these apps use the VPN"),
+    // which the SoftEther plugin applies natively via addAllowedApplication.
+    final allowedApps = _appBasedEnabled
+        ? List<String>.from(_allowedApps)
+        : const <String>[];
+
+    final server = SoftetherServer(
+      host: _host,
+      port: _port,
+      username: _username,
+      password: _password,
+      hub: _hubName.trim().isEmpty ? 'DEFAULT' : _hubName.trim(),
+      clientMac: _clientMac.trim(),
+      dns: (_dnsEnabled && _dns.isNotEmpty) ? _dns : '8.8.8.8',
+      mtu: _pppMtu,
+      addDefaultRoute: _addDefaultRoute,
+      allowedApps: allowedApps,
+    );
+    await _softether.connect(server: server);
+  }
+
   Future<void> disconnect() async {
     // A manual disconnect stops any pending Auto negotiation retry.
     _negotiating = false;
     _autoRetryScheduled = false;
     try {
-      await _sstpFlutter.disconnect();
-      if (_dnsEnabled) {
-        await _sstpFlutter.disableDNS();
-      }
-      if (_proxyEnabled) {
-        await _sstpFlutter.disableProxy();
+      if (_isSoftetherActive) {
+        await _softether.disconnect();
+      } else {
+        await _sstpFlutter.disconnect();
+        if (_dnsEnabled) {
+          await _sstpFlutter.disableDNS();
+        }
+        if (_proxyEnabled) {
+          await _sstpFlutter.disableProxy();
+        }
       }
       _status = VpnStatus.disconnected;
       _statusMessage = '';
       _totalDownload = 0;
       _totalUpload = 0;
       _internalIp = '';
+      _softetherConnectedAt = null;
       // Drop the tunnel exit address; it is no longer valid.
       _externalIpAfter = '';
       _afterLocation = '';
@@ -1352,7 +1484,9 @@ class VpnProvider extends ChangeNotifier {
 
   Future<String?> checkLastConnectionStatus() async {
     try {
-      final status = await _sstpFlutter.checkLastConnectionStatus();
+      final status = await (_isSoftetherActive
+          ? _softether.checkLastConnectionStatus()
+          : _sstpFlutter.checkLastConnectionStatus());
       return status.toString();
     } catch (e) {
       return null;
@@ -1385,7 +1519,9 @@ class VpnProvider extends ChangeNotifier {
     if (_status == VpnStatus.connected) {
       if (_internalIp.isEmpty) {
         try {
-          final ip = await _sstpFlutter.getAssignedIp();
+          final ip = await (_isSoftetherActive
+              ? _softether.getAssignedIp()
+              : _sstpFlutter.getAssignedIp());
           if (ip.isNotEmpty) {
             _internalIp = ip;
             notifyListeners();
@@ -1396,7 +1532,9 @@ class VpnProvider extends ChangeNotifier {
       // Recover the authoritative traffic totals, in case the per-second
       // updates were missed while the app was in the background.
       try {
-        final totals = await _sstpFlutter.getTrafficTotals();
+        final totals = await (_isSoftetherActive
+            ? _softether.getTrafficTotals()
+            : _sstpFlutter.getTrafficTotals());
         if (totals[0] > _totalDownload) _totalDownload = totals[0];
         if (totals[1] > _totalUpload) _totalUpload = totals[1];
         notifyListeners();
@@ -1451,8 +1589,8 @@ class VpnProvider extends ChangeNotifier {
           // An exit address identical to the direct one means the lookup
           // escaped the tunnel (routes not ready yet). Retry, and on the last
           // attempt give up rather than show a wrong address.
-          final leaked = _externalIpBefore.isNotEmpty &&
-              info.ip == _externalIpBefore;
+          final leaked =
+              _externalIpBefore.isNotEmpty && info.ip == _externalIpBefore;
           if (leaked) {
             if (attempt < maxAttempts) {
               await Future.delayed(const Duration(seconds: 2));
@@ -1524,7 +1662,6 @@ class VpnProvider extends ChangeNotifier {
     } catch (_) {}
   }
 
-
   Future<IpGeoInfo?> _fetchExternalIpInfo() async {
     // Geo-aware endpoints first so a single request yields IP + country + city.
     const endpoints = [
@@ -1537,8 +1674,9 @@ class VpnProvider extends ChangeNotifier {
         ..connectionTimeout = const Duration(seconds: 6);
       try {
         final request = await client.getUrl(Uri.parse(endpoint));
-        final response =
-            await request.close().timeout(const Duration(seconds: 8));
+        final response = await request.close().timeout(
+          const Duration(seconds: 8),
+        );
         if (response.statusCode == 200) {
           final body = await response.transform(utf8.decoder).join();
           final info = _parseGeoInfo(jsonDecode(body));
@@ -1574,17 +1712,15 @@ class VpnProvider extends ChangeNotifier {
   }
 
   Future<String?> _fetchIpOnly() async {
-    const endpoints = [
-      'https://api.ipify.org',
-      'https://icanhazip.com',
-    ];
+    const endpoints = ['https://api.ipify.org', 'https://icanhazip.com'];
     for (final endpoint in endpoints) {
       final client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 6);
       try {
         final request = await client.getUrl(Uri.parse(endpoint));
-        final response =
-            await request.close().timeout(const Duration(seconds: 8));
+        final response = await request.close().timeout(
+          const Duration(seconds: 8),
+        );
         if (response.statusCode == 200) {
           final body = await response.transform(utf8.decoder).join();
           final ip = body.trim();

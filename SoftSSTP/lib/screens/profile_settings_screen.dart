@@ -34,8 +34,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   final _staticIpController = TextEditingController();
   final _reconnectionCountController = TextEditingController();
   final _reconnectionIntervalController = TextEditingController();
+  final _hubController = TextEditingController();
+  final _clientMacController = TextEditingController();
 
-  
   int _selectedColorIndex = 0;
 
   bool _obscurePassword = true;
@@ -46,6 +47,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   bool _verifySSLCert = false;
   String _sslVersion = 'AUTO';
   bool _useCustomSni = false;
+
+  // Protocol. SoftEther-only fields (hub, client MAC) are shown when it is set
+  // to [VpnProtocol.softether].
+  String _protocol = VpnProtocol.sstp;
 
   // PPP
   String _authProtocol = 'AUTO';
@@ -89,6 +94,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     final profile = _profile;
     _nameController.text = profile.name;
     _selectedColorIndex = profile.colorIndex;
+    _protocol = profile.protocol;
+    _hubController.text = profile.hubName;
+    _clientMacController.text = profile.clientMac;
     _hostController.text = profile.host;
     _portController.text = profile.port.toString();
     _usernameController.text = profile.username;
@@ -119,8 +127,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     _selectedApps = List<String>.from(profile.allowedApps);
     _reconnectionEnabled = profile.reconnectionEnabled;
     _reconnectionCountController.text = profile.reconnectionCount.toString();
-    _reconnectionIntervalController.text =
-        profile.reconnectionInterval.toString();
+    _reconnectionIntervalController.text = profile.reconnectionInterval
+        .toString();
   }
 
   @override
@@ -140,6 +148,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     _staticIpController.dispose();
     _reconnectionCountController.dispose();
     _reconnectionIntervalController.dispose();
+    _hubController.dispose();
+    _clientMacController.dispose();
     super.dispose();
   }
 
@@ -236,16 +246,16 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             decoration: InputDecoration(
               labelText: 'Profile name',
               hintText: 'Defaults to the server host',
-              prefixIcon: Icon(Icons.badge_outlined, color: AppTheme.textSecondary),
+              prefixIcon: Icon(
+                Icons.badge_outlined,
+                color: AppTheme.textSecondary,
+              ),
             ),
           ),
           const SizedBox(height: 20),
           Text(
             'Icon colour',
-            style: TextStyle(
-              fontSize: 14,
-              color: AppTheme.textSecondary,
-            ),
+            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -262,7 +272,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     color: profileColors[index],
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: selected ? AppTheme.textPrimary : Colors.transparent,
+                      color: selected
+                          ? AppTheme.textPrimary
+                          : Colors.transparent,
                       width: 3,
                     ),
                   ),
@@ -299,13 +311,75 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ),
       child: Column(
         children: [
+          Row(
+            children: [
+              Icon(Icons.vpn_lock_outlined, color: AppTheme.primaryColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Protocol',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+              DropdownButton<String>(
+                value: _protocol,
+                dropdownColor: AppTheme.cardColor,
+                style: TextStyle(color: AppTheme.textPrimary),
+                underline: const SizedBox(),
+                items: const [
+                  DropdownMenuItem(
+                    value: VpnProtocol.sstp,
+                    child: Text('SSTP'),
+                  ),
+                  DropdownMenuItem(
+                    value: VpnProtocol.softether,
+                    child: Text('SoftEther'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null || value == _protocol) return;
+                  setState(() {
+                    _protocol = value;
+                    // Switching protocol must not wipe anything: every field
+                    // keeps its own controller, so the common ones carry over
+                    // unchanged. Seed the hub default only when it is still
+                    // empty (public VPN Gate servers use "VPN", hand-made
+                    // profiles the server default "DEFAULT").
+                    if (value == VpnProtocol.softether &&
+                        _hubController.text.trim().isEmpty) {
+                      _hubController.text = _profile.isPublic
+                          ? 'VPN'
+                          : 'DEFAULT';
+                    }
+                  });
+                },
+              ),
+            ],
+          ),
+          if (_protocol == VpnProtocol.softether)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                "Connects to the server's SSL-VPN (TCP) endpoint. PPP, TLS "
+                'and proxy options are ignored for SoftEther.',
+                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+              ),
+            ),
+          const SizedBox(height: 16),
           TextFormField(
             controller: _hostController,
             style: TextStyle(color: AppTheme.textPrimary),
             decoration: InputDecoration(
               labelText: 'Host',
               hintText: 'vpn.example.com',
-              prefixIcon: Icon(Icons.dns_outlined, color: AppTheme.textSecondary),
+              prefixIcon: Icon(
+                Icons.dns_outlined,
+                color: AppTheme.textSecondary,
+              ),
             ),
             validator: (value) {
               if (value == null || value.isEmpty) {
@@ -322,7 +396,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             decoration: InputDecoration(
               labelText: 'Port',
               hintText: '443',
-              prefixIcon: Icon(Icons.numbers_outlined, color: AppTheme.textSecondary),
+              prefixIcon: Icon(
+                Icons.numbers_outlined,
+                color: AppTheme.textSecondary,
+              ),
             ),
             validator: (value) {
               if (value == null || value.isEmpty) {
@@ -341,7 +418,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             decoration: InputDecoration(
               labelText: 'Username',
               hintText: 'Enter username',
-              prefixIcon: Icon(Icons.person_outline, color: AppTheme.textSecondary),
+              prefixIcon: Icon(
+                Icons.person_outline,
+                color: AppTheme.textSecondary,
+              ),
             ),
             validator: (value) {
               if (value == null || value.isEmpty) {
@@ -358,10 +438,15 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             decoration: InputDecoration(
               labelText: 'Password',
               hintText: 'Enter password',
-              prefixIcon: Icon(Icons.lock_outline, color: AppTheme.textSecondary),
+              prefixIcon: Icon(
+                Icons.lock_outline,
+                color: AppTheme.textSecondary,
+              ),
               suffixIcon: IconButton(
                 icon: Icon(
-                  _obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                  _obscurePassword
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
                   color: AppTheme.textSecondary,
                 ),
                 onPressed: () {
@@ -378,10 +463,61 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               return null;
             },
           ),
+          if (_protocol == VpnProtocol.softether) ...[
+            const SizedBox(height: 16),
+            TextFormField(
+              key: const ValueKey('softether_hub'),
+              controller: _hubController,
+              style: TextStyle(color: AppTheme.textPrimary),
+              decoration: InputDecoration(
+                labelText: 'Virtual hub',
+                hintText: 'DEFAULT',
+                prefixIcon: Icon(
+                  Icons.hub_outlined,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Please enter the hub name';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              key: const ValueKey('softether_client_mac'),
+              controller: _clientMacController,
+              style: TextStyle(color: AppTheme.textPrimary),
+              decoration: InputDecoration(
+                labelText: 'Client MAC (optional)',
+                hintText: 'AA:BB:CC:DD:EE:FF',
+                prefixIcon: Icon(
+                  Icons.badge_outlined,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              validator: (value) {
+                final mac = (value ?? '').trim();
+                if (mac.isEmpty) return null;
+                if (!_isValidMac(mac)) {
+                  return 'Use 6 hex bytes, e.g. AA:BB:CC:DD:EE:FF';
+                }
+                return null;
+              },
+            ),
+          ],
         ],
       ),
     );
   }
+
+  /// Accepts "AA:BB:CC:DD:EE:FF", "AA-BB-..." or "AABBCCDDEEFF".
+  static final RegExp _macRe = RegExp(
+    r'^([0-9A-Fa-f]{2}[:\-]?){5}[0-9A-Fa-f]{2}$',
+  );
+
+  bool _isValidMac(String value) => _macRe.hasMatch(value);
 
   Widget _buildDnsSection() {
     return Container(
@@ -427,7 +563,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               decoration: InputDecoration(
                 labelText: 'DNS Server',
                 hintText: '8.8.8.8',
-                prefixIcon: Icon(Icons.public_outlined, color: AppTheme.textSecondary),
+                prefixIcon: Icon(
+                  Icons.public_outlined,
+                  color: AppTheme.textSecondary,
+                ),
               ),
             ),
           ],
@@ -492,7 +631,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               decoration: InputDecoration(
                 labelText: 'Proxy Host',
                 hintText: 'proxy.example.com',
-                prefixIcon: Icon(Icons.computer_outlined, color: AppTheme.textSecondary),
+                prefixIcon: Icon(
+                  Icons.computer_outlined,
+                  color: AppTheme.textSecondary,
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -503,7 +645,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               decoration: InputDecoration(
                 labelText: 'Proxy Port',
                 hintText: '8080',
-                prefixIcon: Icon(Icons.numbers_outlined, color: AppTheme.textSecondary),
+                prefixIcon: Icon(
+                  Icons.numbers_outlined,
+                  color: AppTheme.textSecondary,
+                ),
               ),
             ),
           ],
@@ -570,8 +715,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 underline: const SizedBox(),
                 items: const [
                   DropdownMenuItem(
-                      value: 'AUTO',
-                      child: Text('Auto', style: TextStyle(fontSize: 14))),
+                    value: 'AUTO',
+                    child: Text('Auto', style: TextStyle(fontSize: 14)),
+                  ),
                   DropdownMenuItem(value: 'MSCHAPv2', child: Text('MSCHAPv2')),
                   DropdownMenuItem(value: 'PAP', child: Text('PAP')),
                 ],
@@ -601,8 +747,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             decoration: InputDecoration(
               labelText: 'Authentication timeout (s)',
               hintText: '5',
-              prefixIcon:
-                  Icon(Icons.timer_outlined, color: AppTheme.textSecondary),
+              prefixIcon: Icon(
+                Icons.timer_outlined,
+                color: AppTheme.textSecondary,
+              ),
             ),
           ),
           Divider(color: AppTheme.dividerColor, height: 32),
@@ -650,8 +798,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               decoration: InputDecoration(
                 labelText: 'IPv4 address',
                 hintText: '10.8.0.4',
-                prefixIcon:
-                    Icon(Icons.pin_outlined, color: AppTheme.textSecondary),
+                prefixIcon: Icon(
+                  Icons.pin_outlined,
+                  color: AppTheme.textSecondary,
+                ),
               ),
             ),
           ],
@@ -725,10 +875,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.checklist_outlined,
-                    color: AppTheme.primaryColor,
-                  ),
+                  Icon(Icons.checklist_outlined, color: AppTheme.primaryColor),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -755,10 +902,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                       ],
                     ),
                   ),
-                  Icon(
-                    Icons.chevron_right,
-                    color: AppTheme.textSecondary,
-                  ),
+                  Icon(Icons.chevron_right, color: AppTheme.textSecondary),
                 ],
               ),
             ),
@@ -780,7 +924,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             subtitle: context.watch<VpnProvider>().appPresets.isEmpty
                 ? 'No saved lists yet'
                 : '${context.watch<VpnProvider>().appPresets.length} saved '
-                    'list(s) available',
+                      'list(s) available',
             enabled: context.watch<VpnProvider>().appPresets.isNotEmpty,
             onTap: _loadAppPreset,
           ),
@@ -873,15 +1017,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     controller.dispose();
     if (name == null || name.trim().isEmpty || !mounted) return;
 
-    await context
-        .read<VpnProvider>()
-        .saveAppPreset(name, List<String>.from(_selectedApps));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saved "${name.trim()}"'),
-      ),
+    await context.read<VpnProvider>().saveAppPreset(
+      name,
+      List<String>.from(_selectedApps),
     );
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Saved "${name.trim()}"')));
   }
 
   /// Shows the saved lists and applies the chosen one to the current profile.
@@ -917,10 +1060,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 ),
                 subtitle: Text(
                   '${preset.packages.length} app(s)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.textSecondary,
-                  ),
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                 ),
                 trailing: IconButton(
                   icon: Icon(
@@ -1076,8 +1216,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 underline: const SizedBox(),
                 items: const [
                   DropdownMenuItem(
-                      value: 'AUTO',
-                      child: Text('Auto', style: TextStyle(fontSize: 14))),
+                    value: 'AUTO',
+                    child: Text('Auto', style: TextStyle(fontSize: 14)),
+                  ),
                   DropdownMenuItem(value: 'TLSv1', child: Text('TLS 1.0')),
                   DropdownMenuItem(value: 'TLSv1_1', child: Text('TLS 1.1')),
                   DropdownMenuItem(value: 'TLSv1_2', child: Text('TLS 1.2')),
@@ -1121,7 +1262,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               decoration: InputDecoration(
                 labelText: 'SNI Hostname',
                 hintText: 'example.com',
-                prefixIcon: Icon(Icons.dns_outlined, color: AppTheme.textSecondary),
+                prefixIcon: Icon(
+                  Icons.dns_outlined,
+                  color: AppTheme.textSecondary,
+                ),
               ),
             ),
           ],
@@ -1156,10 +1300,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
               const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
-                ),
+                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
               ),
             ],
           ),
@@ -1182,9 +1323,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           final certPath = await vpnProvider.addCertificate();
           if (certPath != null && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Certificate added: $certPath'),
-              ),
+              SnackBar(content: Text('Certificate added: $certPath')),
             );
           }
         },
@@ -1227,10 +1366,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right,
-              color: AppTheme.textSecondary,
-            ),
+            Icon(Icons.chevron_right, color: AppTheme.textSecondary),
           ],
         ),
       ),
@@ -1257,6 +1393,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       name: _nameController.text.trim(),
       colorIndex: _selectedColorIndex,
       isPublic: current.isPublic,
+      protocol: _protocol,
+      hubName: _hubController.text.trim().isEmpty
+          ? (current.isPublic ? 'VPN' : 'DEFAULT')
+          : _hubController.text.trim(),
+      clientMac: _clientMacController.text.trim(),
       host: _hostController.text.trim(),
       port: int.tryParse(_portController.text) ?? 443,
       username: _usernameController.text,
@@ -1300,7 +1441,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _isNew ? 'Profile added successfully' : 'Profile saved successfully',
+            _isNew
+                ? 'Profile added successfully'
+                : 'Profile saved successfully',
           ),
         ),
       );

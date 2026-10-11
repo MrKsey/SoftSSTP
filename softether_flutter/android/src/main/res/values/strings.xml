@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- SoftEther VPN State Strings -->
+    <string name="softether_connecting">Connecting SoftEther…</string>
+    <string name="softether_tls_handshake">Establishing SoftEther TLS handshake…</string>
+    <string name="softether_protocol_handshake">Negotiating SoftEther protocol…</string>
+    <string name="softether_authenticating">Authenticating SoftEther session…</string>
+    <string name="softether_session_setup">Establishing SoftEther session…</string>
+    <string name="softether_connected">Connected SoftEther with IP: %1$s</string>
+    <string name="softether_disconnecting">Disconnecting SoftEther…</string>
+    <string name="softether_disconnected">Disconnected SoftEther</string>
+    <string name="softether_disconnected_by_error">Disconnected SoftEther because of error</string>
+    
+    <!-- Notification Strings -->
+    <string name="softether_vpn_service">SoftEther VPN</string>
+    <string name="softether_vpn_connection_status">SoftEther VPN connection status</string>
+    <string name="softether_disconnect">Disconnect</string>
+    
+    <!-- Server Information Format -->
+    <string name="softether_notification_title">SoftEther VPN - %1$s</string>
+    <string name="softether_notification_title_notconnect">SoftEther VPN</string>
+    <string name="softether_channel_name_error">SoftEther VPN Error</string>
+    <string name="softether_channel_description_error">Notifications for SoftEther VPN errors</string>
+    <string name="softether_notification_disconnected_error">SoftEther VPN disconnected due to error</string>
+    <string name="softether_statusline_bytecount">↓%1$s %2$s - ↑%3$s %4$s</string>
+</resources>

@@ -1,0 +1,227 @@
+#ifndef SOFTETHER_RUDP_H
+#define SOFTETHER_RUDP_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// RUDP V1 constants (matching SoftEther UdpAccel.h)
+#define RUDP_COMMON_KEY_SIZE_V1     20
+#define RUDP_PACKET_KEY_SIZE_V1     20
+#define RUDP_PACKET_IV_SIZE_V1      20
+
+// RUDP V2 constants
+#define RUDP_COMMON_KEY_SIZE_V2     128
+#define RUDP_PACKET_IV_SIZE_V2      12
+#define RUDP_PACKET_MAC_SIZE_V2     16
+
+#define RUDP_TMP_BUF_SIZE           2048
+#define RUDP_WINDOW_SIZE_MSEC       (30 * 1000)
+#define RUDP_MAX_PAYLOAD_SIZE       1600
+#define RUDP_MAX_PADDING_SIZE       32
+#define RUDP_REQUIRE_CONTINUOUS     (10 * 1000)
+
+// Keep-alive timing (normal)
+#define RUDP_KA_INTERVAL_MIN        1000
+#define RUDP_KA_INTERVAL_MAX        3000
+#define RUDP_KA_TIMEOUT             9000
+
+// Keep-alive timing (fast - Build 8535+)
+#define RUDP_KA_INTERVAL_MIN_FAST   500
+#define RUDP_KA_INTERVAL_MAX_FAST   1000
+#define RUDP_KA_TIMEOUT_FAST        2100
+
+#define RUDP_MSS_OVERHEAD_V1        145  // IV(20)+Cookie(4)+MyTick(8)+YourTick(8)+Size(2)+Flag(1)+Verify(20)+Eth(14)+IP(20)+TCP(20)+UDP(8)
+#define RUDP_DEFAULT_MSS            1355 // 1500 - 145
+#define RUDP_MSS_OVERHEAD_V2        137  // IV(12)+Cookie(4)+MyTick(8)+YourTick(8)+Size(2)+Flag(1)+MAC(16)+Eth(14)+IP(20)+TCP(20)+UDP(8)
+#define RUDP_DEFAULT_MSS_V2         1363 // 1500 - 137
+
+// IPv6 variants (IPv6 header is 40 bytes vs 20 for IPv4)
+#define RUDP_MSS_OVERHEAD_V1_IPV6   165  // RUDP_MSS_OVERHEAD_V1 + 20
+#define RUDP_DEFAULT_MSS_IPV6       1335 // 1500 - 165
+#define RUDP_MSS_OVERHEAD_V2_IPV6   157  // RUDP_MSS_OVERHEAD_V2 + 20
+#define RUDP_DEFAULT_MSS_V2_IPV6    1343 // 1500 - 157
+
+// Max UDP payload (MTU - IP header - UDP header)
+#define RUDP_MAX_UDP_PACKET_IPV4    1472 // 1500 - 20 - 8
+#define RUDP_MAX_UDP_PACKET_IPV6    1452 // 1500 - 40 - 8
+
+// RUDP flags
+#define RUDP_FLAG_COMPRESSED        0x01
+
+// Receive queue
+#define RUDP_RECV_QUEUE_SIZE        256
+
+// Phase 13F: socket buffer sizing + loss recovery
+#define RUDP_SOCK_BUF_SIZE              (2 * 1024 * 1024) // SO_RCVBUF/SO_SNDBUF target
+#define RUDP_OVERFLOW_SUSPEND_THRESHOLD 8                 // recv-queue overflows before suspending UDP data
+#define RUDP_UDP_SUSPEND_MS             (30 * 1000)       // base data-over-UDP suspension before re-probe
+#define RUDP_PEER_TICK_LOSS_GAP         (10 * 1000)       // peer-tick jump counted as a gap event
+
+// Phase 14: loss-adaptive congestion window + sticky fallback.
+// The SoftEther UDP-accel wire format has no seq/ack fields, so reliability
+// is approximated: the send window shrinks on detected loss (peer-tick gaps,
+// recv overflows) and grows additively while clean; blocks that do not fit
+// the budget ride TCP instead. Re-probe suspensions back off exponentially so
+// a lossy path settles on TCP instead of oscillating every 30 s.
+#define RUDP_CWIN_START                 (256 * 1024)      // initial send-window budget (bytes)
+#define RUDP_CWIN_MIN                   (32 * 1024)       // floor after repeated halvings
+#define RUDP_CWIN_MAX                   (8 * 1024 * 1024) // ceiling while path stays clean
+#define RUDP_CWIN_GROW_BPS              (4ull * 1024 * 1024) // additive refill rate (~4 MB/s)
+#define RUDP_SUSPEND_BACKOFF_MAX_SHIFT  3                 // suspend x1, x2, x4, x8 (cap)
+#define RUDP_CLEAN_RESET_MS             (5 * 60 * 1000)   // clean period that resets backoff state
+
+typedef struct {
+    uint8_t data[RUDP_MAX_PAYLOAD_SIZE];
+    uint32_t len;
+} rudp_queued_block_t;
+
+// RUDP context (simplified version of SoftEther's UDP_ACCEL)
+typedef struct {
+    int udp_fd;
+    int is_client_mode;
+    int inited;
+    int version;
+
+    // Keys
+    uint8_t my_key[RUDP_COMMON_KEY_SIZE_V1];
+    uint8_t your_key[RUDP_COMMON_KEY_SIZE_V1];
+    uint8_t my_key_v2[RUDP_COMMON_KEY_SIZE_V2];
+    uint8_t your_key_v2[RUDP_COMMON_KEY_SIZE_V2];
+
+    // IVs
+    uint8_t next_iv[RUDP_PACKET_IV_SIZE_V1];
+    uint8_t next_iv_v2[RUDP_PACKET_IV_SIZE_V2];
+
+    // V2 cipher contexts (EVP_CIPHER_CTX* for ChaCha20-Poly1305)
+    void* evp_encrypt_ctx;
+    void* evp_decrypt_ctx;
+    int v2_cipher_inited;
+
+    // Cookies
+    uint32_t my_cookie;
+    uint32_t your_cookie;
+
+    // My bound port
+    uint16_t my_port;
+
+    // Peer address
+    struct sockaddr_storage peer_addr;
+    socklen_t peer_addr_len;
+    int peer_addr_set;
+    int is_ipv6;             // 1 if the UDP socket / peer is IPv6
+
+    // Timing
+    uint64_t now;
+    uint64_t last_recv_tick;
+    uint64_t last_recv_your_tick;
+    uint64_t last_recv_my_tick;
+    uint64_t next_send_keepalive;
+    uint64_t first_stable_receive_tick;
+
+    // MSS/MTU
+    uint32_t mss;
+    uint32_t max_udp_packet_size;
+
+    // Session compression negotiated in the login PACK (Phase 13B).
+    // 0 (default): rudp_send sends payloads as-is.
+    int use_compress;
+
+    // Receive queue (decoded blocks from UDP)
+    rudp_queued_block_t recv_queue[RUDP_RECV_QUEUE_SIZE];
+    int recv_queue_head;
+    int recv_queue_tail;
+    int recv_queue_count;
+
+    // Error tracking
+    int fatal_error;
+
+    // Phase 13F: loss recovery + observability.
+    // recv_queue_overflow_count replaces the old silent drop: when the
+    // receive queue is full the frame is counted and dropped. Sustained
+    // overflows indicate a congested/lossy path — udp_data_suspended then
+    // routes DATA over TCP (keepalives continue over UDP) for
+    // RUDP_UDP_SUSPEND_MS before re-probing.
+    uint64_t recv_queue_overflow_count;
+    uint64_t udp_rx_packets;          // valid inbound RUDP packets processed
+    uint64_t peer_tick_gap_events;    // inbound peer-tick jumps >= RUDP_PEER_TICK_LOSS_GAP
+    uint64_t last_peer_tick_seen;     // peer's own clock at last accepted packet
+    uint32_t recent_overflows;        // overflows since last (re)probe window
+    int udp_data_suspended;           // 1 = send data via TCP, KAs only on UDP
+    uint64_t udp_data_resume_tick;    // when the suspension lifts
+    uint32_t suspension_count;        // consecutive suspensions (drives backoff)
+    uint64_t last_loss_event_tick;    // last gap/overflow/timeout seen (ms tick)
+
+    // Phase 15: global RUDP lock. rudp_poll/rudp_send are called from both
+    // the RX thread and the TUN send thread; without serialization, concurrent
+    // sends race on next_iv (cipher chaining) and poll races on the recv
+    // queue - corrupted upstream datagrams that servers silently drop.
+    pthread_mutex_t lock;
+
+    // Phase 14: loss-adaptive send window. Data sends consume the budget;
+    // rudp_is_send_ready returns 0 when it is exhausted, so excess blocks
+    // fall back to TCP until the token bucket refills.
+    uint64_t cwin_bytes;
+    uint64_t cwin_last_refill_tick;
+    int cwin_inited;
+} rudp_context_t;
+
+// Phase 13F: snapshot of RUDP health counters (for nativeGetStats / logging)
+typedef struct {
+    uint64_t recv_queue_overflow_count;
+    uint64_t udp_rx_packets;
+    uint64_t peer_tick_gap_events;
+    int udp_data_suspended;
+} rudp_stats_t;
+
+// API functions
+rudp_context_t* rudp_create(int is_client);
+void rudp_destroy(rudp_context_t* ctx);
+
+int rudp_init_client(rudp_context_t* ctx,
+                     const uint8_t* server_key, int server_key_size,
+                     const char* server_ip, uint16_t server_port,
+                     uint32_t server_cookie,
+                     uint32_t client_cookie);
+
+int rudp_init_server(rudp_context_t* ctx,
+                     const uint8_t* client_key, int client_key_size,
+                     const char* client_ip, uint16_t client_port);
+
+// Recreate the UDP socket for the given address family (AF_INET or AF_INET6),
+// re-binding to a fresh ephemeral port. Use before the login PACK is sent so
+// the advertised client port matches the socket actually used.
+int rudp_set_udp_family(rudp_context_t* ctx, int family);
+
+void rudp_poll(rudp_context_t* ctx);
+void rudp_set_tick(rudp_context_t* ctx, uint64_t tick);
+
+int rudp_is_send_ready(rudp_context_t* ctx, int check_keepalive);
+uint32_t rudp_calc_mss(rudp_context_t* ctx);
+
+int rudp_send(rudp_context_t* ctx, const uint8_t* data, uint32_t data_size, uint8_t flag);
+int rudp_send_keepalive(rudp_context_t* ctx);
+
+// Receive decoded blocks from the queue
+int rudp_recv(rudp_context_t* ctx, uint8_t* buffer, uint32_t* len, uint32_t max_len);
+
+// Utility
+void rudp_set_version(rudp_context_t* ctx, int version);
+void rudp_set_fast_detect(rudp_context_t* ctx, int fast);
+void rudp_set_compress(rudp_context_t* ctx, int enable);
+int rudp_get_udp_fd(rudp_context_t* ctx);
+int rudp_is_active(rudp_context_t* ctx);
+
+// Phase 13F: read health counters
+void rudp_get_stats(rudp_context_t* ctx, rudp_stats_t* out);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // SOFTETHER_RUDP_H

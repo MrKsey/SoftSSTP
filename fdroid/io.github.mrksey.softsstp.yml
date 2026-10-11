@@ -27,6 +27,12 @@ Builds:
     versionCode: 11
     commit: v1.0.0
     subdir: SoftSSTP
+    # The SoftEther plugin cross-compiles OpenSSL from the pinned git submodule
+    # (F-Droid forbids shipping prebuilt native binaries), so the submodule has
+    # to be checked out during the build.
+    submodules: true
+    # Matches the ndkVersion pinned in softether_flutter/android/build.gradle.
+    ndk: 28.2.13676358
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
     srclibs:
       - flutter@stable
@@ -53,6 +59,12 @@ Builds:
     versionCode: 12
     commit: v1.0.0
     subdir: SoftSSTP
+    # The SoftEther plugin cross-compiles OpenSSL from the pinned git submodule
+    # (F-Droid forbids shipping prebuilt native binaries), so the submodule has
+    # to be checked out during the build.
+    submodules: true
+    # Matches the ndkVersion pinned in softether_flutter/android/build.gradle.
+    ndk: 28.2.13676358
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
     srclibs:
       - flutter@stable
@@ -92,4 +104,7 @@ MaintainerNotes: |
   Every release bumps both and is tagged vX.Y.Z; the tag must match the pubspec
   version. Split APKs use versionCode * 10 + slot (armeabi-v7a = 1,
   arm64-v8a = 2), mirrored in VercodeOperation and in build.gradle.kts.
+  The SoftEther plugin builds OpenSSL (pinned submodule) from source during the
+  Gradle build, so the buildserver needs bash, perl and make (all present) and
+  the NDK above. No prebuilt .so/.a files are committed.
   No reproducible build: the app is signed with F-Droid's key.

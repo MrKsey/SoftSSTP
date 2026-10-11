@@ -45,12 +45,31 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The SoftEther plugin builds OpenSSL from source (F-Droid rule: no
+          # prebuilt binaries), so the pinned submodule must be checked out.
+          submodules: recursive
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Ensure Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_VERSION="$(grep -oP "ndkVersion\s+'\K[^']+" softether_flutter/android/build.gradle | head -n1)"
+          echo "Required NDK: ${NDK_VERSION}"
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "${SDKMANAGER}" ] && [ -n "${ANDROID_SDK_ROOT:-}" ]; then
+            SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          if [ -x "${SDKMANAGER}" ]; then
+            yes | "${SDKMANAGER}" --install "ndk;${NDK_VERSION}" > /dev/null || true
+          else
+            echo "sdkmanager not found; the Android Gradle Plugin will fetch the NDK."
+          fi
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2

@@ -164,14 +164,14 @@ class _HomeScreenState extends State<HomeScreen>
         return [
           const SizedBox(height: 6),
           Text(
-            '${vpnProvider.host}:${vpnProvider.port} • '
-            '${vpnProvider.effectiveAuthProtocol} • '
-            '${vpnProvider.sslVersionLabel}',
+            vpnProvider.isSoftether
+                ? '${vpnProvider.host}:${vpnProvider.port} • '
+                      'SoftEther • hub ${vpnProvider.hubName}'
+                : '${vpnProvider.host}:${vpnProvider.port} • '
+                      '${vpnProvider.effectiveAuthProtocol} • '
+                      '${vpnProvider.sslVersionLabel}',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.textSecondary,
-            ),
+            style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
           ),
         ];
       case VpnStatus.connecting:
@@ -181,7 +181,7 @@ class _HomeScreenState extends State<HomeScreen>
             vpnProvider.statusMessage.isNotEmpty
                 ? vpnProvider.statusMessage
                 : 'Establishing secure tunnel to '
-                    '${vpnProvider.host}:${vpnProvider.port}…',
+                      '${vpnProvider.host}:${vpnProvider.port}…',
           ),
         ];
       case VpnStatus.reconnecting:
@@ -195,10 +195,7 @@ class _HomeScreenState extends State<HomeScreen>
         ];
       case VpnStatus.disconnected:
         if (vpnProvider.errorMessage.isEmpty) return const [];
-        return [
-          const SizedBox(height: 10),
-          _buildErrorBox(vpnProvider),
-        ];
+        return [const SizedBox(height: 10), _buildErrorBox(vpnProvider)];
     }
   }
 
@@ -270,10 +267,7 @@ class _HomeScreenState extends State<HomeScreen>
                 const SizedBox(height: 4),
                 Text(
                   'Tap the button to try again.',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: AppTheme.textSecondary,
-                  ),
+                  style: TextStyle(fontSize: 10, color: AppTheme.textSecondary),
                 ),
               ],
             ),
@@ -299,7 +293,8 @@ class _HomeScreenState extends State<HomeScreen>
           Text(
             vpnProvider.status == VpnStatus.connected
                 ? vpnProvider.formatTraffic(
-                    vpnProvider.totalDownload + vpnProvider.totalUpload)
+                    vpnProvider.totalDownload + vpnProvider.totalUpload,
+                  )
                 : '0 B',
             style: TextStyle(
               fontSize: 23.4,
@@ -311,10 +306,7 @@ class _HomeScreenState extends State<HomeScreen>
           Text(
             _statusLabel(vpnProvider),
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 9.9,
-              color: _statusColor(vpnProvider),
-            ),
+            style: TextStyle(fontSize: 9.9, color: _statusColor(vpnProvider)),
           ),
           ..._buildStatusDetail(vpnProvider),
           const SizedBox(height: 9),
@@ -326,7 +318,7 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildConnectionButton(VpnProvider vpnProvider) {
     Color buttonColor;
     IconData buttonIcon;
-    
+
     switch (vpnProvider.status) {
       case VpnStatus.connected:
         buttonColor = AppTheme.primaryColor;
@@ -352,16 +344,9 @@ class _HomeScreenState extends State<HomeScreen>
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: buttonColor.withValues(alpha: 0.15),
-        border: Border.all(
-          color: buttonColor,
-          width: 2.7,
-        ),
+        border: Border.all(color: buttonColor, width: 2.7),
       ),
-      child: Icon(
-        buttonIcon,
-        size: 30.6,
-        color: buttonColor,
-      ),
+      child: Icon(buttonIcon, size: 30.6, color: buttonColor),
     );
 
     if (vpnProvider.status == VpnStatus.connecting ||
@@ -385,15 +370,12 @@ class _HomeScreenState extends State<HomeScreen>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => ProfileSettingsScreen(
-                profileId: vpnProvider.activeProfileId,
-              ),
+              builder: (context) =>
+                  ProfileSettingsScreen(profileId: vpnProvider.activeProfileId),
             ),
           );
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Please configure server settings first'),
-            ),
+            SnackBar(content: Text('Please configure server settings first')),
           );
         }
       },
@@ -469,12 +451,10 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ),
               ),
-              Icon(
-                Icons.unfold_more,
-                color: AppTheme.textSecondary,
-              ),
+              Icon(Icons.unfold_more, color: AppTheme.textSecondary),
               Switch(
-                value: vpnProvider.status == VpnStatus.connected ||
+                value:
+                    vpnProvider.status == VpnStatus.connected ||
                     vpnProvider.status == VpnStatus.connecting ||
                     vpnProvider.status == VpnStatus.reconnecting,
                 onChanged: vpnProvider.isConfigured
@@ -527,9 +507,8 @@ class _HomeScreenState extends State<HomeScreen>
     final result = await Navigator.push<List<String>>(
       context,
       MaterialPageRoute(
-        builder: (context) => AppsScreen(
-          initiallySelected: vpnProvider.allowedApps,
-        ),
+        builder: (context) =>
+            AppsScreen(initiallySelected: vpnProvider.allowedApps),
       ),
     );
     if (result != null) {
@@ -584,7 +563,9 @@ class _HomeScreenState extends State<HomeScreen>
           _buildIpRow(
             icon: Icons.settings_ethernet,
             label: 'Server-assigned VPN address',
-            value: internal.isEmpty ? (connected ? 'Detecting…' : '—') : internal,
+            value: internal.isEmpty
+                ? (connected ? 'Detecting…' : '—')
+                : internal,
             location: '',
             color: Colors.green,
           ),
@@ -614,10 +595,7 @@ class _HomeScreenState extends State<HomeScreen>
             children: [
               Text(
                 label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
-                ),
+                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
               ),
               const SizedBox(height: 2),
               Text(
@@ -668,7 +646,7 @@ class _HomeScreenState extends State<HomeScreen>
           Text(
             vpnProvider.status == VpnStatus.connected
                 ? 'Connection Stats '
-                    '(${vpnProvider.formatDuration(vpnProvider.connectionDuration)})'
+                      '(${vpnProvider.formatDuration(vpnProvider.connectionDuration)})'
                 : 'Connection Stats',
             style: TextStyle(
               fontSize: 16,
@@ -707,17 +685,19 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  Widget _buildStatItem(IconData icon, String label, String value, Color color) {
+  Widget _buildStatItem(
+    IconData icon,
+    String label,
+    String value,
+    Color color,
+  ) {
     return Column(
       children: [
         Icon(icon, color: color, size: 24),
         const SizedBox(height: 8),
         Text(
           label,
-          style: TextStyle(
-            fontSize: 12,
-            color: AppTheme.textSecondary,
-          ),
+          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
         ),
         const SizedBox(height: 4),
         Text(

@@ -1,0 +1,103 @@
+#ifndef SOFTETHER_JNI_H
+#define SOFTETHER_JNI_H
+
+#include <jni.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Connection management
+JNIEXPORT jlong JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeCreate(
+    JNIEnv *env, jobject thiz);
+
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeDestroy(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeConnect(
+    JNIEnv *env, jobject thiz, jlong handle, jstring host, jint port, 
+    jstring username, jstring password);
+
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeDisconnect(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetState(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// Data I/O
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSend(
+    JNIEnv *env, jobject thiz, jlong handle, jbyteArray data, jint length);
+
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeReceive(
+    JNIEnv *env, jobject thiz, jlong handle, jbyteArray buffer, jint maxLength);
+
+// Configuration
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetOption(
+    JNIEnv *env, jobject thiz, jlong handle, jint option, jlong value);
+
+// Socket access (for VpnService.protect())
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetSocketFd(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// NAT-T RUDP transport UDP socket (for VpnService.protect()); -1 when the
+// connection is not running over the NAT-T transport.
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNatTUdpSocketFd(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// Multi-connection support
+JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetMaxConnection(
+    JNIEnv *env, jobject thiz, jlong handle, jint maxConnections);
+
+JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNumConnections(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+JNIEXPORT jintArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetAllSocketFds(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// DHCP over SoftEther tunnel
+JNIEXPORT jintArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeDoDhcp(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// Test functions for instrumentation tests
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestTcpConnection(
+    JNIEnv *env, jobject thiz, jstring host, jint port, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestTlsHandshake(
+    JNIEnv *env, jobject thiz, jstring host, jint port, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestSoftEtherHandshake(
+    JNIEnv *env, jobject thiz, jstring host, jint port, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestAuthentication(
+    JNIEnv *env, jobject thiz, jstring host, jint port, 
+    jstring username, jstring password, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestSession(
+    JNIEnv *env, jobject thiz, jstring host, jint port,
+    jstring username, jstring password, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestDataTransmission(
+    JNIEnv *env, jobject thiz, jstring host, jint port,
+    jstring username, jstring password, jint packetCount, 
+    jint packetSize, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestKeepalive(
+    JNIEnv *env, jobject thiz, jstring host, jint port,
+    jstring username, jstring password, jint durationSeconds, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestFullLifecycle(
+    JNIEnv *env, jobject thiz, jstring host, jint port,
+    jstring username, jstring password, jint timeoutMs);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestRudpV2Loopback(
+    JNIEnv *env, jobject thiz);
+
+JNIEXPORT jobject JNICALL Java_vn_unlimit_softether_test_NativeConnectionTest_nativeTestRudpTransportLoopback(
+    JNIEnv *env, jobject thiz);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // SOFTETHER_JNI_H

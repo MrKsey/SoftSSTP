@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/public_profile.dart';
+import '../models/vpn_profile.dart';
 
 /// Fetches and parses the public server table from https://www.vpngate.net and
 /// measures the latency from the device to each server.
@@ -17,14 +18,27 @@ class VpngateService {
     dotAll: true,
   );
 
+  // The DDNS hostname cell: the first "<b><span ...>host</span></b>" in a row.
+  static final RegExp _ddnsRe = RegExp(
+    r"<b><span[^>]*>\s*([^<]+?)\s*</span></b>",
+  );
+
+  // The SSL-VPN (SoftEther) cell exposes the TCP port, e.g. "TCP: 443".
+  static final RegExp _softetherPortRe = RegExp(
+    r"howto_softether\.aspx.*?TCP:\s*(\d+)",
+    dotAll: true,
+  );
+
   // Country flag image and the country name right after it.
-  static final RegExp _flagRe =
-      RegExp(r"images/flags/([A-Za-z]{2})\.png'[^>]*><br>([^<]+)");
+  static final RegExp _flagRe = RegExp(
+    r"images/flags/([A-Za-z]{2})\.png'[^>]*><br>([^<]+)",
+  );
 
   // Line quality throughput, e.g. "151.43 Mbps".
   static final RegExp _qualityRe = RegExp(r"([\d.]+ (?:Mbps|Gbps|Kbps))");
 
-  /// Downloads the page and returns only the servers that expose an SSTP host.
+  /// Downloads the page and returns every server that exposes an SSTP or
+  /// SoftEther (SSL-VPN) endpoint.
   Future<List<PublicProfile>> fetchServers() async {
     final html = await _fetch(listUrl);
     return parse(html);
@@ -41,15 +55,16 @@ class VpngateService {
         '(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
       );
       request.headers.set(HttpHeaders.acceptHeader, 'text/html');
-      final response =
-          await request.close().timeout(const Duration(seconds: 20));
+      final response = await request.close().timeout(
+        const Duration(seconds: 20),
+      );
       return await response.transform(utf8.decoder).join();
     } finally {
       client.close(force: true);
     }
   }
 
-  /// Parses the raw HTML table, keeping only rows that carry an SSTP hostname.
+  /// Parses the raw HTML table into SSTP and SoftEther (SSL-VPN) servers.
   List<PublicProfile> parse(String html) {
     final servers = <PublicProfile>[];
     final seen = <String>{};
@@ -58,36 +73,70 @@ class VpngateService {
       final row = rowMatch.group(1);
       if (row == null) continue;
 
-      final sstp = _sstpRe.firstMatch(row);
-      if (sstp == null) continue;
+      final flag = _flagRe.firstMatch(row);
+      final countryCode = flag?.group(1)?.toUpperCase() ?? '';
+      final countryName = flag?.group(2)?.trim() ?? '';
+      final quality = _qualityRe.firstMatch(row)?.group(1) ?? '';
 
-      final rawHost = sstp.group(1)?.trim() ?? '';
-      if (rawHost.isEmpty) continue;
-
-      var host = rawHost;
-      var port = 443;
-      final colon = rawHost.lastIndexOf(':');
-      if (colon > 0) {
-        final parsedPort = int.tryParse(rawHost.substring(colon + 1));
-        if (parsedPort != null) {
-          host = rawHost.substring(0, colon);
-          port = parsedPort;
+      // MS-SSTP endpoint.
+      final sstp = _sstpRe.firstMatch(row)?.group(1)?.trim();
+      if (sstp != null && sstp.isNotEmpty) {
+        final parsed = _splitHostPort(sstp);
+        if (seen.add(
+          '${VpnProtocol.sstp}:${parsed.$1.toLowerCase()}:${parsed.$2}',
+        )) {
+          servers.add(
+            PublicProfile(
+              protocol: VpnProtocol.sstp,
+              host: parsed.$1,
+              port: parsed.$2,
+              countryCode: countryCode,
+              countryName: countryName,
+              lineQuality: quality,
+            ),
+          );
         }
       }
 
-      if (!seen.add('$host:$port')) continue;
-
-      final flag = _flagRe.firstMatch(row);
-      servers.add(PublicProfile(
-        host: host,
-        port: port,
-        countryCode: flag?.group(1)?.toUpperCase() ?? '',
-        countryName: flag?.group(2)?.trim() ?? '',
-        lineQuality: _qualityRe.firstMatch(row)?.group(1) ?? '',
-      ));
+      // SoftEther (SSL-VPN) endpoint: the DDNS host plus the SSL-VPN TCP port.
+      final ddns = _ddnsRe.firstMatch(row)?.group(1)?.trim();
+      final sePort = int.tryParse(
+        _softetherPortRe.firstMatch(row)?.group(1) ?? '',
+      );
+      if (ddns != null && ddns.isNotEmpty && sePort != null) {
+        if (seen.add(
+          '${VpnProtocol.softether}:${ddns.toLowerCase()}:$sePort',
+        )) {
+          servers.add(
+            PublicProfile(
+              protocol: VpnProtocol.softether,
+              host: ddns,
+              port: sePort,
+              countryCode: countryCode,
+              countryName: countryName,
+              lineQuality: quality,
+            ),
+          );
+        }
+      }
     }
 
     return servers;
+  }
+
+  /// Splits "host[:port]" into a host and a port (443 when absent).
+  (String, int) _splitHostPort(String rawHost) {
+    var host = rawHost;
+    var port = 443;
+    final colon = rawHost.lastIndexOf(':');
+    if (colon > 0) {
+      final parsedPort = int.tryParse(rawHost.substring(colon + 1));
+      if (parsedPort != null) {
+        host = rawHost.substring(0, colon);
+        port = parsedPort;
+      }
+    }
+    return (host, port);
   }
 
   /// Measures the TCP connect time to [host]:[port] in milliseconds.

@@ -1,9 +1,15 @@
-/// A public VPN Gate server that speaks MS-SSTP.
+import 'vpn_profile.dart';
+
+/// A public VPN Gate server that speaks MS-SSTP or SoftEther (SSL-VPN).
 class PublicProfile {
-  /// SSTP hostname without the port.
+  /// VPN protocol this server entry uses: [VpnProtocol.sstp] or
+  /// [VpnProtocol.softether].
+  final String protocol;
+
+  /// Server hostname (without the port).
   final String host;
 
-  /// SSTP port (443 when the list does not specify one).
+  /// Protocol port (443 when the list does not specify one).
   final int port;
 
   /// ISO 3166-1 alpha-2 country code, e.g. "JP".
@@ -16,6 +22,7 @@ class PublicProfile {
   final String lineQuality;
 
   const PublicProfile({
+    this.protocol = VpnProtocol.sstp,
     required this.host,
     required this.port,
     required this.countryCode,
@@ -31,8 +38,9 @@ class PublicProfile {
   String get countryKey => countryName.isNotEmpty ? countryName : countryCode;
 
   /// Stable identity used to detect duplicates and to filter out servers that
-  /// are already in the profile list (compared by host + port).
-  String get key => '${host.trim().toLowerCase()}:$port';
+  /// are already in the profile list (compared by protocol + host + port).
+  String get key =>
+      '${protocol.trim().toLowerCase()}:${host.trim().toLowerCase()}:$port';
 
   /// Suggested profile name: the uppercase country code, a dash and the server,
   /// e.g. "RU - server.com". Falls back to the bare host when the country is
@@ -43,8 +51,10 @@ class PublicProfile {
   /// The site's "Line quality" throughput expressed in Mbps, so the list can be
   /// sorted numerically. Returns 0 when the value is missing or unparseable.
   double get qualityMbps {
-    final match = RegExp(r'([\d.]+)\s*(Mbps|Gbps|Kbps)', caseSensitive: false)
-        .firstMatch(lineQuality);
+    final match = RegExp(
+      r'([\d.]+)\s*(Mbps|Gbps|Kbps)',
+      caseSensitive: false,
+    ).firstMatch(lineQuality);
     if (match == null) return 0;
     final value = double.tryParse(match.group(1)!) ?? 0;
     switch (match.group(2)!.toLowerCase()) {

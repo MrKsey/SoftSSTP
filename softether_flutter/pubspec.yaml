@@ -1,0 +1,29 @@
+name: softether_flutter
+description: >-
+  Flutter plugin for SoftEther VPN (SSL-VPN) connections on Android. Bundles a
+  vendored SoftEther client with a TCP transport.
+version: 1.0.0
+publish_to: 'none'
+
+platforms:
+  android:
+
+environment:
+  sdk: '>=3.1.2 <4.0.0'
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.softether_flutter
+        pluginClass: SoftetherFlutterPlugin

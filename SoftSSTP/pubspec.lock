@@ -557,6 +557,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  softether_flutter:
+    dependency: "direct main"
+    description:
+      path: "../softether_flutter"
+      relative: true
+    source: path
+    version: "1.0.0"
   source_span:
     dependency: transitive
     description:
