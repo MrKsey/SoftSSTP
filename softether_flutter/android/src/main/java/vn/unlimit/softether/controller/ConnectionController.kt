@@ -327,11 +327,16 @@ class ConnectionController(
         // Requested SoftEther session options (Windows-client equivalents). The
         // server decides the final values; the negotiated result is logged once
         // the session is up (see logSessionInfo()).
+        val duplexLabel = when (config.fullDuplex) {
+            true -> "full"
+            false -> "half"
+            null -> "auto"
+        }
         SoftEtherLog.append(
             "SESSION",
             "Requested: tcpConnections=${config.maxConnections} " +
                 "establishInterval=${config.establishIntervalMs}ms " +
-                "duplex=${config.duplexMode} sslEncrypt=${config.useEncrypt} " +
+                "duplex=$duplexLabel sslEncrypt=${config.useEncrypt} " +
                 "compress=${config.useCompress} udpAcceleration=${!config.useUdp} " +
                 "qos=${config.qos} udpPort=${config.udpPort}"
         )
