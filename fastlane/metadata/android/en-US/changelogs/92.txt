@@ -1,0 +1,1 @@
+SoftEther SSL-VPN fixes. Connecting no longer crashes the app, and a session with more than one TCP connection no longer stalls and drops the tunnel. This build uses a separate version code per architecture.
