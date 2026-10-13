@@ -1,0 +1,1 @@
+SoftEther fixes. A session with several TCP connections no longer drops under load, and reconnecting after a settings change (for example switching SSL on) no longer leaves the tunnel down until the profile is toggled. Connection logging is now off by default; the per-link traffic split can be turned on in Settings. This build uses a separate version code per architecture.
