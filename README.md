@@ -39,9 +39,10 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
   tunneling, reconnection and advanced settings, plus a name and an icon colour. Pick
   the active profile on the home screen; a profile is saved when you press Save.
 - Two protocols per profile: Microsoft SSTP and SoftEther (SSL-VPN over TCP). SoftEther
-  profiles also take a virtual hub (VPN Gate servers use `VPN`, hand-made profiles
+  profiles also take a virtual hub (VPN Gate servers use `VPNGATE`, hand-made profiles
   default to `DEFAULT`), an optional client MAC address and the number of parallel TCP
-  connections (default 2, profiles from VPN Gate start with 1).
+  connections (default 2, profiles from VPN Gate start with 1, raised in the editor up
+  to 8).
 - Public profiles from VPN Gate: browse SSTP and SoftEther servers with country flag, line
   quality and ping measured from your device, filter by protocol, then add one with a tap
   (login `vpn`, password `vpn`).
@@ -92,8 +93,8 @@ release notes in `fastlane/metadata/android`.
    deletes profiles; Diagnostics and About live there too.
 2. Open a profile and fill in Host, Port (default 443), Username and Password. Pick the
    Protocol: SSTP or SoftEther. SoftEther profiles also ask for the virtual hub (VPN Gate
-   servers use `VPN`, hand-made profiles default to `DEFAULT`) and an optional client MAC.
-   Add a name and icon colour if you like, then press Save.
+   servers use `VPNGATE`, hand-made profiles default to `DEFAULT`) and an optional client
+   MAC. Add a name and icon colour if you like, then press Save.
 3. Tune DNS, proxy, SSL, PPP, routing and split tunneling if you need to. DNS, proxy, SSL
    and PPP apply to SSTP; SoftEther uses the server's SSL-VPN endpoint and ignores them.
    Routing and App Routing (split tunneling) work for both protocols.
@@ -173,12 +174,12 @@ the clipboard or cleared. Attach the whole file to a bug report.
 
 ### SoftEther extra TCP connections
 
-Public VPN Gate servers drop extra TCP connections, so a profile added from the list
-starts with one. A server of your own usually handles two; the number lives in the
-profile under SoftEther. If the extra links never come up, the log shows how many links
-actually went up and why each failed attempt died. The Per-link statistics switch adds
-a traffic split per link every 5 seconds, and the split at the end of a session is
-always written.
+The number of parallel TCP connections lives in the profile under SoftEther, from one to
+eight. A server of your own defaults to two, a profile added from the VPN Gate list starts
+with one, yet public servers usually carry more than one, so raise the number on a fast
+server. If the extra links never come up, the log shows how many links actually went up
+and why each failed attempt died. The Per-link statistics switch adds a traffic split per
+link every 5 seconds, and the split at the end of a session is always written.
 
 ## Build from source
 
