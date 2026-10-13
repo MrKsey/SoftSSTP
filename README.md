@@ -40,7 +40,8 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
   the active profile on the home screen; a profile is saved when you press Save.
 - Two protocols per profile: Microsoft SSTP and SoftEther (SSL-VPN over TCP). SoftEther
   profiles also take a virtual hub (VPN Gate servers use `VPN`, hand-made profiles
-  default to `DEFAULT`) and an optional client MAC address.
+  default to `DEFAULT`), an optional client MAC address and the number of parallel TCP
+  connections (default 2, profiles from VPN Gate start with 1).
 - Public profiles from VPN Gate: browse SSTP and SoftEther servers with country flag, line
   quality and ping measured from your device, filter by protocol, then add one with a tap
   (login `vpn`, password `vpn`).
@@ -59,12 +60,16 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
   hostname and certificate verification, MTU/MRU, auth protocol, IPv4/IPv6, static
   IP and routing.
 - Traffic counters that survive screen-off and app recreation.
+- Connection diagnostics. Both protocols write to one file,
+  `Android/data/io.github.mrksey.softsstp/files/connection_log.txt`, and the
+  View connection log screen shows it inside the app. Logging is off by default and
+  turns on in Settings, where the per-link statistics switch sits next to it.
 
 ## Requirements
 
 - Android 8.0 (API 26) or newer
 - A reachable SSTP or SoftEther (SSL-VPN, TCP) server with DHCP enabled
-- PAP and MS-CHAPv2 only (no EAP)
+- For SSTP, PAP and MS-CHAPv2 only (no EAP)
 
 ## Installation
 
@@ -77,6 +82,9 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
 
 Every release is signed with the same certificate, so updates install over the
 previous version without uninstalling.
+
+An F-Droid listing is being prepared; the build recipe lives in `fdroid/` and the
+release notes in `fastlane/metadata/android`.
 
 ## Usage
 
@@ -93,6 +101,41 @@ previous version without uninstalling.
    list.
 5. On the home screen, tap the server card to switch profiles, then tap connect. Tap
    again or tap the notification to disconnect.
+6. If a connection fails, turn on logging in Settings, Diagnostics and open the
+   View connection log screen.
+
+## Settings
+
+The Settings screen is made of blocks.
+
+- Profiles: the profile list with add, edit, export, share, set active and delete. Add
+  public profile and Import profile live here too.
+- Diagnostics: the Connection logging switch, the Per-link statistics switch and the
+  View connection log entry.
+- Background: the system battery-optimization exemption. Without it Android may stop
+  the VPN in the background.
+- Donate and About: donation wallets and links to the project.
+
+A profile opens on tap and has its own blocks.
+
+- Profile: name and icon colour.
+- Server Configuration: host, port, username, password, protocol. SoftEther profiles
+  also take the virtual hub and an optional client MAC address.
+- DNS Settings: custom DNS server and asking the server for DNS.
+- Proxy Settings and PPP, SSTP only: HTTP proxy, MTU/MRU, auth protocol and its
+  timeout, IPv4/IPv6, static address.
+- SoftEther, SoftEther only: number of TCP connections, establishing interval, MTU,
+  SSL session encryption, disabling UDP acceleration and QoS.
+- Routing: default route and private-address routes.
+- App Routing: split tunneling, saving and loading the app list.
+- Reconnection: retry count and interval.
+- Advanced and Certificate, SSTP only: hostname and certificate verification, SSL
+  version, custom SNI, adding a trusted certificate.
+
+Connection logging and the per-link statistics are off by default; turn them on while
+you are chasing a problem. The log is shared by both protocols, each session starts
+with a `=== NEW ... SESSION ===` header that also carries the app version. The file is
+capped at 512 KB: when it overflows it is cleared and starts over.
 
 ## Troubleshooting
 
@@ -120,6 +163,23 @@ watches the network and rebuilds the tunnel on the new one, with no manual recon
 Both this and the slot recovery are bounded, so a flapping network or a persistent
 takeover cannot loop forever.
 
+### The connection log
+
+Logging is off by default, so turn Connection logging on before you reproduce the
+problem. Both protocols write to one file, a new session starts with a
+`=== NEW ... SESSION ===` header that also carries the app version and the APK install
+time. The View connection log screen shows the file path, and the log can be copied to
+the clipboard or cleared. Attach the whole file to a bug report.
+
+### SoftEther extra TCP connections
+
+Public VPN Gate servers drop extra TCP connections, so a profile added from the list
+starts with one. A server of your own usually handles two; the number lives in the
+profile under SoftEther. If the extra links never come up, the log shows how many links
+actually went up and why each failed attempt died. The Per-link statistics switch adds
+a traffic split per link every 5 seconds, and the split at the end of a session is
+always written.
+
 ## Build from source
 
 ```bash
@@ -146,12 +206,28 @@ The `--recursive` flag checks out the pinned OpenSSL submodule that the
 `softether_flutter` plugin needs; if you cloned without it, run
 `git submodule update --init --recursive`.
 
-APKs are written to `build/app/outputs/apk/release/`.
+Flutter writes the APKs to `build/app/outputs/flutter-apk/`, and Gradle puts renamed
+copies next to them in `build/app/outputs/apk/release/`.
 
-CI builds both architectures on every push to `main` and publishes a GitHub
-Release when a `v*` tag is pushed. The version name and code live in
-`pubspec.yaml`; bump them, commit and tag `vX.Y.Z` to release. Builds are signed
-with a keystore kept in repository secrets.
+The version name and code live in `pubspec.yaml`. A split build gives each architecture
+its own version code: the number from pubspec is multiplied by 10 and the slot number is
+added, one for armeabi-v7a and two for arm64-v8a. The universal APK keeps the original
+code. The same slots are set in `VercodeOperation` in the F-Droid recipe and in
+`SoftSSTP/android/app/build.gradle.kts`.
+
+CI builds both architectures on every push to `main` and publishes a GitHub Release when
+a `v*` tag is pushed. Bump the version in `pubspec.yaml` and commit it before tagging,
+and make the tag name match the version. Builds are signed with a keystore kept in
+repository secrets. Documentation-only changes, `docs`, `fastlane` and `fdroid` do not
+trigger a build.
+
+### F-Droid
+
+The build recipe lives in `fdroid/io.github.mrksey.softsstp.yml` and the release notes
+for F-Droid in `fastlane/metadata/android`. The SoftEther plugin builds OpenSSL from
+source and no prebuilt `.so` files are committed, so the recipe pins the submodule and
+the NDK. Each architecture gets its own build entry with a version code from
+`VercodeOperation`.
 
 ## Donate
 
