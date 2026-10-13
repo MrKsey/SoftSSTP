@@ -23,7 +23,7 @@ import android.os.SystemClock
  */
 internal class NetworkChangeObserver(
     context: Context,
-    private val onChanged: () -> Unit,
+    private val onChanged: (String) -> Unit,
 ) {
     private val manager = context.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -37,18 +37,33 @@ internal class NetworkChangeObserver(
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             val isNew = synchronized(knownNetworks) { knownNetworks.add(network) }
-            if (isNew) notifyChanged()
+            if (isNew) notifyChanged("available ${describe(network)}")
         }
 
         override fun onLost(network: Network) {
             val removed = synchronized(knownNetworks) { knownNetworks.remove(network) }
-            if (removed) notifyChanged()
+            if (removed) notifyChanged("lost ${describe(network)}")
         }
     }
 
-    private fun notifyChanged() {
+    /** Best-effort transport label, so the log names the network that changed. */
+    private fun describe(network: Network): String {
+        val caps = try {
+            manager.getNetworkCapabilities(network)
+        } catch (_: Exception) {
+            null
+        } ?: return "network"
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            else -> "network"
+        }
+    }
+
+    private fun notifyChanged(reason: String) {
         if (!primed) return
-        onChanged()
+        onChanged(reason)
     }
 
     internal fun start() {

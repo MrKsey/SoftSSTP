@@ -62,9 +62,22 @@ int generate_random_bytes(uint8_t* buffer, size_t len);
 // TLS/SSL operations
 typedef struct ssl_context ssl_context_t;
 
+// Returned by ssl_read() (and propagated by the packet-layer read helpers) when
+// the peer sent nothing within the socket timeout (SO_RCVTIMEO). It means "no
+// data yet" and must NOT be treated as a broken link: the reference
+// SoftEtherVPN client surfaces the same condition as SOCK_LATER and simply
+// polls again. Anything else non-positive is a real error.
+#define SE_SSL_READ_TIMEOUT (-2)
+
 ssl_context_t* ssl_create_client(void);
 void ssl_destroy(ssl_context_t* ctx);
 int ssl_connect(ssl_context_t* ctx, int socket_fd, const char* hostname);
+// Human-readable reason of the most recent ssl_connect() failure on THIS thread
+// (empty string if the last handshake succeeded). Lets a caller surface why a
+// handshake died without turning ssl_connect into an out-parameter API.
+const char* ssl_last_error(void);
+// Returns: >0 bytes read, 0 on clean peer shutdown, SE_SSL_READ_TIMEOUT when
+// the socket timed out with no data, -1 on error.
 int ssl_read(ssl_context_t* ctx, uint8_t* buffer, size_t len);
 int ssl_write(ssl_context_t* ctx, const uint8_t* data, size_t len);
 int ssl_has_pending(ssl_context_t* ctx);

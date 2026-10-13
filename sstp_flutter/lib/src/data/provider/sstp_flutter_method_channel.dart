@@ -146,7 +146,6 @@ class MethodChannelSstpFlutter {
         "reconnectionCount": server.androidConfiguration.reconnectionCount,
         "reconnectionInterval":
             server.androidConfiguration.reconnectionInterval,
-
         "showDisconnectOnNotification":
             server.androidConfiguration.showDisconnectOnNotification,
         "notificationText": server.androidConfiguration.notificationText,
@@ -165,6 +164,13 @@ class MethodChannelSstpFlutter {
     String status =
         await methodChannelCaller.invokeMethod("checkLastConnectionStatus");
     return status;
+  }
+
+  /// Writes a lifecycle marker into the shared connection log from Dart.
+  Future<void> logMessage(
+      {required String tag, required String message}) async {
+    await methodChannelCaller
+        .invokeMethod("logMessage", {"tag": tag, "message": message});
   }
 
   /// Returns the epoch-millis timestamp when the current connection was
@@ -195,7 +201,6 @@ class MethodChannelSstpFlutter {
     return const [0, 0];
   }
 
-
   Future<String> addCertificate() async {
     String caller =
         await methodChannelCaller.invokeMethod("addTrustedCertificate");
@@ -210,7 +215,8 @@ class MethodChannelSstpFlutter {
 
   /// Returns the in-memory connection log collected so far.
   Future<String> getConnectionLog() async {
-    final log = await methodChannelCaller.invokeMethod<String>("getConnectionLog");
+    final log =
+        await methodChannelCaller.invokeMethod<String>("getConnectionLog");
     return log ?? "";
   }
 
@@ -228,8 +234,8 @@ class MethodChannelSstpFlutter {
 
   /// True when the system has exempted the app from battery optimization.
   Future<bool> isIgnoringBatteryOptimizations() async {
-    final result =
-        await methodChannelCaller.invokeMethod("isIgnoringBatteryOptimizations");
+    final result = await methodChannelCaller
+        .invokeMethod("isIgnoringBatteryOptimizations");
     return result == true;
   }
 

@@ -14,6 +14,10 @@ KODA-TODO.md
 *.log
 build_err.txt
 
+# Device/build artifacts captured locally
+/.logs/
+/softether_flutter/android/.cxx/
+
 # Python
 __pycache__/
 *.pyc

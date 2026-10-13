@@ -286,6 +286,15 @@ class SoftetherFlutter {
     return _assignedIp;
   }
 
+  /// Tunnel uptime in milliseconds as measured by the native service, or 0 when
+  /// no tunnel is up. The service outlives the Flutter Activity, so this is what
+  /// lets the UI rebuild its uptime timer after the app is backgrounded and
+  /// brought back (an anchor kept in Dart memory would restart from zero).
+  Future<Duration> getConnectionUptime() async {
+    final ms = await _command.invokeMethod<num>('getConnectionUptime');
+    return Duration(milliseconds: (ms ?? 0).toInt());
+  }
+
   /// Returns the cumulative traffic counters as `[downloadBits, uploadBits]`.
   Future<List<int>> getTrafficTotals() async {
     final result =
@@ -298,6 +307,23 @@ class SoftetherFlutter {
   Future<void> setConnectionLogging({required bool enabled}) async {
     await _command
         .invokeMethod<bool>('setConnectionLogging', {'enabled': enabled});
+  }
+
+  /// True while the SoftEther VPN service instance exists. Its reported state
+  /// turns to "disconnected" as soon as a teardown starts, while the teardown
+  /// and the service stop still run in the background, so this is what tells a
+  /// caller the previous instance is really gone and a connect will land on a
+  /// fresh one.
+  Future<bool> isServiceRunning() async {
+    final running = await _command.invokeMethod<bool>('isServiceRunning');
+    return running ?? false;
+  }
+
+  /// Enables or disables the periodic (every 5 s) per-link traffic split in the
+  /// native log. Off by default; the split at the end of a session is always
+  /// written either way.
+  Future<void> setPerLinkStats({required bool enabled}) async {
+    await _command.invokeMethod<bool>('setPerLinkStats', {'enabled': enabled});
   }
 
   /// Returns the collected native connection log (empty when disabled).

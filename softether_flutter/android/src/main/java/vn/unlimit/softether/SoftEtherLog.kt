@@ -1,6 +1,7 @@
 package vn.unlimit.softether
 
 import android.content.Context
+import android.os.Build
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -29,15 +30,52 @@ object SoftEtherLog {
     @Volatile
     var enabled: Boolean = false
 
+    /**
+     * Whether the periodic (every 5 s) per-link traffic split is written to the
+     * log. Off by default: during an idle session the line is identical on every
+     * tick and buries everything else. The end-of-session split is written
+     * regardless of this flag, so the distribution is never lost.
+     */
+    @Volatile
+    var perLinkStatsEnabled: Boolean = false
+
     private var logFile: File? = null
+    private var appVersion: String = ""
 
     fun init(context: Context) {
         if (logFile != null) return
         val dir = context.getExternalFilesDir(null) ?: context.filesDir
         logFile = File(dir, FILE_NAME)
+        appVersion = resolveAppVersion(context)
     }
 
     fun filePath(): String = logFile?.absolutePath ?: ""
+
+    /**
+     * Version of the installed app plus when the APK was last updated, e.g.
+     * "1.3.4 (9) installed=2026-10-12 19:20". Written into every session header
+     * so a collected log can be tied to the exact build that produced it: several
+     * test builds share one version name while the native library differs, and
+     * the update timestamp is what tells them apart.
+     */
+    fun appVersion(): String = appVersion.ifEmpty { "unknown" }
+
+    private fun resolveAppVersion(context: Context): String {
+        return try {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+            val installed = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                .format(Date(info.lastUpdateTime))
+            "${info.versionName ?: "?"} ($code) installed=$installed"
+        } catch (_: Throwable) {
+            "unknown"
+        }
+    }
 
     @Synchronized
     fun append(tag: String, message: String) {
@@ -57,6 +95,7 @@ object SoftEtherLog {
         writeLine("")
         writeLine(separator)
         writeLine("=== NEW SOFTETHER SESSION  ${sessionTimestamp()} ===")
+        writeLine("    appVersion=${appVersion()}")
         if (details.isNotBlank()) {
             writeLine("    $details")
         }

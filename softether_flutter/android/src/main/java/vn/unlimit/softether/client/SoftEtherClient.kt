@@ -1,5 +1,6 @@
 package vn.unlimit.softether.client
 
+import android.net.VpnService
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -8,16 +9,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Provides high-level API for connection management
  */
 class SoftEtherClient {
-
-    /**
-     * Protects a socket fd from the VPN tunnel (wraps VpnService.protect).
-     * Implemented by the app and installed before connecting so that the
-     * additional SoftEther TCP sockets, which are opened after the tunnel is
-     * up, are not routed into the tunnel itself.
-     */
-    fun interface SocketProtector {
-        fun protect(fd: Int): Boolean
-    }
 
     private val tag = "SoftEtherClient"
     private var nativeHandle: Long = 0
@@ -74,14 +65,15 @@ class SoftEtherClient {
     }
 
     /**
-     * Install (or clear, with null) the socket-protect callback. Must be called
-     * before connect: the native side invokes it on each new socket fd right
-     * before connect(), so the additional TCP connections bypass the tunnel.
+     * Install (or clear, with null) the socket-protect hook. [vpnService] is the
+     * app's VpnService; the native side calls VpnService.protect(fd) on each new
+     * socket right before connect(), so the additional TCP connections bypass the
+     * tunnel. Must be called before connect. Returns true when the hook is active.
      */
-    fun setProtectCallback(protector: SocketProtector?) {
+    fun setProtectCallback(vpnService: VpnService?): Boolean {
         val handle = activeHandle()
-        if (handle == 0L) return
-        nativeSetProtectCallback(handle, protector)
+        if (handle == 0L) return false
+        return nativeSetProtectCallback(handle, vpnService)
     }
 
     /**
@@ -183,7 +175,7 @@ class SoftEtherClient {
         val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
         if (handle == 0L) return null
         val arr = nativeGetSessionInfo(handle) ?: return null
-        if (arr.size < 12) return null
+        if (arr.size < 15) return null
         return SoftEtherSessionInfo(
             numConnections = arr[0].toInt(),
             requestedMaxConnections = arr[1].toInt(),
@@ -196,8 +188,47 @@ class SoftEtherClient {
             additionalFailedCount = arr[8].toInt(),
             additionalLastStage = arr[9].toInt(),
             additionalLastError = arr[10].toInt(),
-            additionalLastAttemptMs = arr[11].toInt()
+            additionalLastAttemptMs = arr[11].toInt(),
+            additionalLastFailStage = arr[12].toInt(),
+            protectAvailable = arr[13] != 0L,
+            additionalLastProtect = arr[14].toInt()
         )
+    }
+
+    /**
+     * Human-readable specifics of the last finished additional-connect attempt:
+     * target address, errno, OpenSSL reason, HTTP status, local socket address.
+     * Null when no attempt has finished yet.
+     */
+    fun getSessionDetail(): String? {
+        val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
+        if (handle == 0L) return null
+        return nativeGetSessionDetail(handle)
+    }
+
+    /**
+     * Per-link byte split of the session. Returns a pair of arrays sized
+     * MAX_SE_CONNECTIONS + 1: index 0 is the primary link, index i+1 is
+     * additional slot i. Null when the handle is invalid.
+     */
+    fun getLinkStats(): Pair<LongArray, LongArray>? {
+        val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
+        if (handle == 0L) return null
+        val arr = nativeGetLinkStats(handle) ?: return null
+        val n = arr.size / 2
+        if (n == 0) return null
+        return arr.copyOfRange(0, n) to arr.copyOfRange(n, 2 * n)
+    }
+
+    /**
+     * Why the last data-link read failed ("primary fd=42 revents=0x10
+     * (POLLHUP)"), or null when no link has failed. The receive loop only sees a
+     * bare -1 otherwise, which made a dropped session impossible to attribute.
+     */
+    fun getLastLinkError(): String? {
+        val handle = externalHandle.takeIf { it != 0L } ?: nativeHandle
+        if (handle == 0L) return null
+        return nativeGetLastLinkError(handle)
     }
 
     /**
@@ -262,13 +293,16 @@ class SoftEtherClient {
     external fun nativeDoDhcp(handle: Long): IntArray?
     external fun nativeSetAuthType(handle: Long, authType: Int)
     external fun nativeSetMaxConnection(handle: Long, maxConnections: Int)
-    external fun nativeSetProtectCallback(handle: Long, protector: SocketProtector?)
+    external fun nativeSetProtectCallback(handle: Long, vpnService: VpnService?): Boolean
     external fun nativeSetSessionOptions(
         handle: Long, maxConnections: Int, establishIntervalMs: Int,
         useEncrypt: Boolean, useCompress: Boolean, qos: Boolean
     )
     external fun nativeGetNumConnections(handle: Long): Int
     external fun nativeGetSessionInfo(handle: Long): LongArray?
+    external fun nativeGetSessionDetail(handle: Long): String?
+    external fun nativeGetLinkStats(handle: Long): LongArray?
+    external fun nativeGetLastLinkError(handle: Long): String?
     external fun nativeGetAllSocketFds(handle: Long): IntArray?
     external fun nativeForceCloseSocket(handle: Long)
     external fun nativeGetClientMac(handle: Long): ByteArray?
@@ -361,6 +395,15 @@ data class DhcpResult(
  * @param additionalLastStage stage code (0..7) the last attempt reached
  * @param additionalLastError server "error" value of the last attempt (0 = none)
  * @param additionalLastAttemptMs wall-clock duration of the last attempt (ms)
+ * @param additionalLastFailStage stage the last FINISHED attempt died at. Unlike
+ * [additionalLastStage], which the next attempt overwrites immediately, this one
+ * names the failure even while the retry loop is running.
+ * @param protectAvailable true when the platform protect hook is installed. When
+ * false, every additional socket is created inside the VPN tunnel: it connects
+ * and handshakes normally but then stalls, and the app counts links the server
+ * never established.
+ * @param additionalLastProtect result of the protect hook on the last attempt:
+ * 1 = excluded from the tunnel, -1 = the hook ran and failed, 0 = no hook.
  */
 data class SoftEtherSessionInfo(
     val numConnections: Int,
@@ -374,7 +417,10 @@ data class SoftEtherSessionInfo(
     val additionalFailedCount: Int,
     val additionalLastStage: Int,
     val additionalLastError: Int,
-    val additionalLastAttemptMs: Int
+    val additionalLastAttemptMs: Int,
+    val additionalLastFailStage: Int,
+    val protectAvailable: Boolean,
+    val additionalLastProtect: Int
 ) {
     /**
      * Human-readable name of [additionalLastStage]. Mirrors the SE_ADDL_STAGE_*
@@ -382,17 +428,38 @@ data class SoftEtherSessionInfo(
      * multi-connection attempt without logcat.
      */
     val additionalLastStageName: String
-        get() = when (additionalLastStage) {
-            0 -> "none"
-            1 -> "no-slot"
-            2 -> "tcp"
-            3 -> "tls"
-            4 -> "watermark"
-            5 -> "auth"
-            6 -> "auth-resp"
-            7 -> "server-error"
-            else -> "stage$additionalLastStage"
+        get() = stageName(additionalLastStage)
+
+    /** Human-readable name of [additionalLastFailStage]. */
+    val additionalLastFailStageName: String
+        get() = stageName(additionalLastFailStage)
+
+    /**
+     * Human-readable result of the protect hook on the last additional-connection
+     * attempt. "n/a" means no attempt has run yet (the hook is only exercised
+     * while bringing an extra link up), which is not the same as the hook being
+     * unavailable — the old "off" label read like a broken hook.
+     */
+    val protectStateName: String
+        get() = when {
+            additionalLastProtect > 0 -> "ok"
+            additionalLastProtect < 0 -> "FAILED"
+            else -> "n/a"
         }
+
+    private fun stageName(stage: Int): String = when (stage) {
+        0 -> "none"
+        1 -> "no-slot"
+        2 -> "tcp"
+        3 -> "tls"
+        4 -> "watermark"
+        5 -> "auth"
+        6 -> "auth-resp"
+        7 -> "server-error"
+        8 -> "http-error"
+        9 -> "bad-body"
+        else -> "stage$stage"
+    }
 }
 
 /**

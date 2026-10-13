@@ -82,6 +82,34 @@ class SoftEtherVpnService : VpnService() {
             private set
         var currentAssignedIp: String = ""
             private set
+        /**
+         * True while this service instance exists. It is the only signal that
+         * tells the app the previous instance is really gone, which matters
+         * because [currentState] flips to DISCONNECTED the moment a teardown
+         * starts — while the teardown itself (and the stopSelf() after it) still
+         * runs on a background thread. A connect sent into that window is served
+         * by the about-to-die instance and killed by its onDestroy right after
+         * starting, which is how "enable SSL on the active profile" sometimes
+         * left the tunnel down until the profile was toggled off and on.
+         */
+        @Volatile
+        var instanceAlive: Boolean = false
+            private set
+        // Wall-clock time the tunnel last reached CONNECTED, or 0 while down.
+        // The UI's uptime timer used to be anchored in Dart memory, which is lost
+        // when the Activity is recreated (backgrounding the app), so the timer
+        // restarted from zero on return. The service outlives the Activity, so the
+        // anchor lives here and the app can rebuild the timer from it.
+        @Volatile
+        var connectedAtMs: Long = 0L
+            private set
+
+        /** Tunnel uptime in milliseconds, or 0 when no tunnel is up. */
+        fun connectionUptimeMs(): Long {
+            val at = connectedAtMs
+            return if (at == 0L) 0L else System.currentTimeMillis() - at
+        }
+
         var currentTrafficSnapshot: SoftEtherTrafficSnapshot = SoftEtherTrafficSnapshot.EMPTY
             private set
         var lastTrafficSnapshot: SoftEtherTrafficSnapshot = SoftEtherTrafficSnapshot.EMPTY
@@ -120,6 +148,13 @@ class SoftEtherVpnService : VpnService() {
         private fun notifyListeners(state: String, assignedIp: String) {
             currentState = state
             currentAssignedIp = assignedIp
+            // Anchor (or clear) the uptime timer on the transition, not on every
+            // event, so a reconnect starts a fresh timer and a disconnect stops it.
+            if (state == STATE_CONNECTED) {
+                if (connectedAtMs == 0L) connectedAtMs = System.currentTimeMillis()
+            } else if (state == STATE_DISCONNECTED || state == STATE_ERROR) {
+                connectedAtMs = 0L
+            }
             mainHandler.post {
                 stateListeners.forEach { it.onSoftEtherStateChanged(state, assignedIp) }
             }
@@ -163,6 +198,7 @@ class SoftEtherVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service created")
+        instanceAlive = true
         SoftEtherLog.init(this)
         SoftEtherLog.append("SERVICE", "Service created")
         createNotificationChannel()
@@ -270,6 +306,7 @@ class SoftEtherVpnService : VpnService() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "Service destroyed")
+        SoftEtherLog.append("SERVICE", "SoftEther service destroyed")
         
         // Cancel any ongoing connection attempt
         connectionJob?.cancel()
@@ -291,6 +328,13 @@ class SoftEtherVpnService : VpnService() {
         
         unregisterNetworkReceiver()
         notifyTrafficListeners(SoftEtherTrafficSnapshot.EMPTY)
+        // The instance is gone from here on, and in every path that matters the
+        // session teardown has already completed: stopVpn() destroys the
+        // controller before calling stopSelf(), and the cleanup below only ever
+        // runs on a controller it already nulled. Flipping this lets the app
+        // start the next connect against a fresh instance instead of racing this
+        // one's death.
+        instanceAlive = false
         // NonCancellable: serviceScope is cancelled right below, but this
         // cleanup must still run to free the native connection.
         serviceScope.launch(NonCancellable + Dispatchers.IO) {
@@ -392,6 +436,13 @@ class SoftEtherVpnService : VpnService() {
 
         Log.d(TAG, "Stopping VPN")
         isRunning = false
+        // Mirror the SSTP service: the app log gets an explicit end-of-session
+        // line, so a disconnect (user, error, or protocol switch) is visible
+        // without a logcat.
+        SoftEtherLog.append(
+            "SERVICE",
+            if (disconnectByError) "Disconnect requested (error)" else "Disconnect requested"
+        )
 
         // Send disconnect/error broadcast immediately so the UI reacts right away
         sendConnectionStateBroadcast(if (disconnectByError) STATE_ERROR else STATE_DISCONNECTED)

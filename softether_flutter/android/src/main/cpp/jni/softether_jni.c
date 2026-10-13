@@ -3,6 +3,7 @@
 #include <android/log.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <signal.h>
 
 #define TAG "SoftEtherJNI"
@@ -20,16 +21,28 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     return JNI_VERSION_1_6;
 }
 
-// Currently installed protect target (SoftEtherClient.SocketProtector). Only one
+// Currently installed protect target: the app's VpnService instance. Only one
 // VPN tunnel is active at a time, so a single global reference is enough: it is
 // replaced on every connect and released when a new one is installed.
 static jobject g_protector = NULL;
 static jmethodID g_protect_method = NULL;
 
+// The hook resolves protect(I)Z on the platform class android.net.VpnService,
+// not on anything the app declares. Two earlier attempts to look the method up
+// on the app side both failed on device ("SocketProtector.protect(I)Z
+// unavailable", so the callback was cleared and every additional socket ran
+// through the tunnel): first on the Kotlin SAM lambda's own class (a hidden
+// class from LambdaMetafactory), then on the nested interface looked up by name.
+// android.net.VpnService lives on the boot classpath, so FindClass() always
+// succeeds and protect(int) is public and stable across releases.
+#define PROTECTOR_CLASS "android/net/VpnService"
+#define PROTECTOR_METHOD "protect"
+#define PROTECTOR_SIG "(I)Z"
+
 // Invoked from the native connect path (possibly on a background thread) for a
 // freshly created socket fd, before connect(). Attaches the thread to the JVM if
-// needed and calls SocketProtector.protect(fd) so Android can exclude the socket
-// from the VPN tunnel (VpnService.protect). Returns 0 on success.
+// needed and calls VpnService.protect(fd) so Android can exclude the socket from
+// the VPN tunnel. Returns 0 on success.
 static int jni_protect_fd(void* userdata, int fd) {
     (void)userdata;
     if (g_jvm == NULL || g_protector == NULL || g_protect_method == NULL) {
@@ -54,7 +67,7 @@ static int jni_protect_fd(void* userdata, int fd) {
 
     jboolean ok = (*env)->CallBooleanMethod(env, g_protector, g_protect_method, (jint)fd);
     if ((*env)->ExceptionCheck(env)) {
-        LOGE("protect: Java exception in SocketProtector.protect");
+        LOGE("protect: Java exception in VpnService.protect");
         (*env)->ExceptionDescribe(env);
         (*env)->ExceptionClear(env);
         ok = JNI_FALSE;
@@ -68,14 +81,14 @@ static int jni_protect_fd(void* userdata, int fd) {
     return ok == JNI_TRUE ? 0 : -1;
 }
 
-// Install (or clear, with protector=null) the socket-protect callback on the
+// Install (or clear, with vpnService=null) the socket-protect hook on the
 // native connection. Must be called before connecting so additional TCP sockets
-// bypass the tunnel.
-JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetProtectCallback(
-    JNIEnv *env, jobject thiz, jlong handle, jobject protector) {
+// bypass the tunnel. Returns true when the hook was installed.
+JNIEXPORT jboolean JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetProtectCallback(
+    JNIEnv *env, jobject thiz, jlong handle, jobject vpnService) {
     if (handle == 0) {
         LOGE("Invalid handle for setProtectCallback");
-        return;
+        return JNI_FALSE;
     }
     softether_connection_t* conn = (softether_connection_t*)handle;
 
@@ -85,34 +98,40 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
         g_protect_method = NULL;
     }
 
-    if (protector != NULL) {
-        g_protector = (*env)->NewGlobalRef(env, protector);
-        jclass cls = (g_protector != NULL) ? (*env)->GetObjectClass(env, protector) : NULL;
-        if (cls != NULL) {
-            g_protect_method = (*env)->GetMethodID(env, cls, "protect", "(I)Z");
-            (*env)->DeleteLocalRef(env, cls);
-        } else {
-            g_protect_method = NULL;
-        }
-        if (g_protect_method == NULL) {
-            // GetObjectClass / GetMethodID left a pending exception (OOM or
-            // NoSuchMethodError). Leaving it pending makes the JVM throw it into
-            // Kotlin on the next frame as an Error — which the connect flow's
-            // catch (Exception) does not handle — and the process dies. Clear it
-            // and fall back to "no socket protection" instead.
-            if ((*env)->ExceptionCheck(env)) {
-                (*env)->ExceptionDescribe(env);
-                (*env)->ExceptionClear(env);
-            }
-            LOGE("setProtectCallback: SocketProtector.protect(I)Z unavailable");
-            if (g_protector != NULL) {
-                (*env)->DeleteGlobalRef(env, g_protector);
-                g_protector = NULL;
-            }
-        }
+    if (vpnService == NULL) {
+        softether_set_protect_callback(conn, NULL, NULL);
+        return JNI_FALSE;
     }
 
-    softether_set_protect_callback(conn, g_protector != NULL ? jni_protect_fd : NULL, NULL);
+    g_protector = (*env)->NewGlobalRef(env, vpnService);
+
+    jclass cls = (*env)->FindClass(env, PROTECTOR_CLASS);
+    if (cls != NULL) {
+        g_protect_method = (*env)->GetMethodID(env, cls, PROTECTOR_METHOD, PROTECTOR_SIG);
+        (*env)->DeleteLocalRef(env, cls);
+    }
+    if (g_protect_method == NULL) {
+        // FindClass / GetMethodID left a pending exception (OOM or
+        // NoSuchMethodError). Leaving it pending makes the JVM throw it into
+        // Kotlin on the next frame as an Error — which the connect flow's
+        // catch (Exception) does not handle — and the process dies. Clear it
+        // and fall back to "no socket protection" instead.
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionDescribe(env);
+            (*env)->ExceptionClear(env);
+        }
+        LOGE("setProtectCallback: VpnService.protect(I)Z unavailable");
+        if (g_protector != NULL) {
+            (*env)->DeleteGlobalRef(env, g_protector);
+            g_protector = NULL;
+        }
+        softether_set_protect_callback(conn, NULL, NULL);
+        return JNI_FALSE;
+    }
+
+    LOGD("setProtectCallback: %s.%s resolved", PROTECTOR_CLASS, PROTECTOR_METHOD);
+    softether_set_protect_callback(conn, jni_protect_fd, NULL);
+    return JNI_TRUE;
 }
 
 // JNI Implementation for SoftEtherClient
@@ -147,9 +166,9 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeDe
     
     softether_destroy(conn);
     // Release the protect-callback target: it holds a global reference to the
-    // app's SocketProtector (which captures the VpnService), so keeping it after
-    // teardown would pin the service. Safe here — teardown runs only once the
-    // connect flow has ended, so no protect upcall can be in flight.
+    // app's VpnService, so keeping it after teardown would pin the service. Safe
+    // here — teardown runs only once the connect flow has ended, so no protect
+    // upcall can be in flight.
     if (g_protector != NULL) {
         (*env)->DeleteGlobalRef(env, g_protector);
         g_protector = NULL;
@@ -502,7 +521,8 @@ JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_na
         IDX_NUM_CONNECTIONS, IDX_REQUESTED_MAX, IDX_SERVER_MAX,
         IDX_USE_SSL_DATA, IDX_SERVER_ENCRYPT, IDX_SERVER_COMPRESS,
         IDX_USING_NAT_T, IDX_ADDL_ATTEMPTS, IDX_ADDL_FAILED,
-        IDX_ADDL_STAGE, IDX_ADDL_ERROR, IDX_ADDL_MS, IDX_COUNT
+        IDX_ADDL_STAGE, IDX_ADDL_ERROR, IDX_ADDL_MS,
+        IDX_ADDL_FAIL_STAGE, IDX_PROTECT_AVAILABLE, IDX_ADDL_PROTECT, IDX_COUNT
     };
 
     jlongArray arr = (*env)->NewLongArray(env, IDX_COUNT);
@@ -521,8 +541,70 @@ JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_na
     vals[IDX_ADDL_STAGE] = (jlong)info.additional_last_stage;
     vals[IDX_ADDL_ERROR] = (jlong)info.additional_last_error;
     vals[IDX_ADDL_MS] = (jlong)info.additional_last_attempt_ms;
+    vals[IDX_ADDL_FAIL_STAGE] = (jlong)info.additional_last_fail_stage;
+    vals[IDX_PROTECT_AVAILABLE] = (jlong)info.protect_available;
+    vals[IDX_ADDL_PROTECT] = (jlong)info.additional_last_protect;
 
     (*env)->SetLongArrayRegion(env, arr, 0, IDX_COUNT, vals);
+    return arr;
+}
+
+JNIEXPORT jstring JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetSessionDetail(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return NULL;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+
+    softether_session_info_t info;
+    softether_get_session_info(conn, &info);
+
+    // The detail line itself already carries primary_local and protect, so only
+    // the hook state is appended here. It used to repeat both, which doubled the
+    // length of every "Addl detail" line without adding information.
+    char detail[320];
+    snprintf(detail, sizeof(detail), "%s | hook=%s",
+             info.additional_last_detail[0] ? info.additional_last_detail : "(none)",
+             info.protect_available ? "installed" : "MISSING");
+    return (*env)->NewStringUTF(env, detail);
+}
+
+// Reason the last data-link read failed ("primary fd=42 revents=0x10 (POLLHUP)").
+// Null when no link has failed. The Kotlin receive loop only sees a bare -1, so
+// this is what names the link and the cause in the app log.
+JNIEXPORT jstring JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetLastLinkError(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return NULL;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+
+    char detail[160];
+    softether_get_last_link_error(conn, detail, (int)sizeof(detail));
+    if (detail[0] == '\0') return NULL;
+    return (*env)->NewStringUTF(env, detail);
+}
+
+// Per-link traffic split. Returns long[2*(MAX_SE_CONNECTIONS+1)]:
+//   [0 .. MAX]                    -> tx bytes per link (0 = primary, i+1 = slot i)
+//   [MAX+1 .. 2*MAX+1]            -> rx bytes per link
+// or NULL when the handle is invalid. Used by the app log to show whether the
+// extra TCP connections actually carry traffic.
+JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetLinkStats(
+    JNIEnv *env, jobject thiz, jlong handle) {
+    if (handle == 0) return NULL;
+    softether_connection_t* conn = (softether_connection_t*)handle;
+
+    uint64_t tx[MAX_SE_CONNECTIONS + 1];
+    uint64_t rx[MAX_SE_CONNECTIONS + 1];
+    int n = softether_get_link_stats(conn, tx, rx, MAX_SE_CONNECTIONS + 1);
+    if (n <= 0) return NULL;
+
+    jlong vals[2 * (MAX_SE_CONNECTIONS + 1)];
+    for (int i = 0; i < n; i++) {
+        vals[i] = (jlong)tx[i];
+        vals[n + i] = (jlong)rx[i];
+    }
+
+    jlongArray arr = (*env)->NewLongArray(env, 2 * n);
+    if (arr == NULL) return NULL;
+    (*env)->SetLongArrayRegion(env, arr, 0, 2 * n, vals);
     return arr;
 }
 

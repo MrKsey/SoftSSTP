@@ -33,6 +33,11 @@ typedef struct {
     // routed into the tunnel itself and hang until the connect timeout.
     int (*protect_fn)(void* userdata, int fd);
     void* protect_userdata;
+    // Result of the most recent protect_fn call for the current fd: 1 = the
+    // socket was excluded, -1 = the hook ran and failed, 0 = no hook installed.
+    // Read by the connect caller so a socket that silently stayed inside the
+    // tunnel is not mistaken for a healthy link.
+    int protect_result;
 } softether_socket_t;
 
 // Function prototypes

@@ -87,6 +87,10 @@ internal const val CONNECTION_STATUS_NETWORK_CHANGED = "Network changed"
 // debounced, and it is bounded so a flapping network cannot loop forever.
 private const val MAX_NETWORK_RECONNECT_ATTEMPTS = 3
 private const val NETWORK_CHANGE_DEBOUNCE_MS = 1_500L
+// Window after a successful connect during which underlying-network changes are
+// ignored: the TUN setup/teardown itself reshapes the networks and must not be
+// mistaken for a real switch (see onUnderlyingNetworkChanged).
+private const val NETWORK_SETTLE_MS = 10_000L
 
 // When another VPN (e.g. AdGuard) grabs the VPN slot, the system calls
 // onRevoke(). AdGuard keeps a watchdog that re-prepares itself a few seconds
@@ -123,6 +127,9 @@ internal class SstpVpnService : VpnService() {
     private var networkChangeObserver: NetworkChangeObserver? = null
     private var jobNetworkReconnect: Job? = null
     private var networkReconnectAttempts = 0
+    // Monotonic time of the last successful connect, used for the settle window.
+    @Volatile
+    private var lastEstablishedAtMs = 0L
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var foregroundBuilder: NotificationCompat.Builder? = null
@@ -231,8 +238,8 @@ internal class SstpVpnService : VpnService() {
         scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
         // Follow the underlying network for the whole lifetime of the service.
-        networkChangeObserver = NetworkChangeObserver(this) {
-            onUnderlyingNetworkChanged()
+        networkChangeObserver = NetworkChangeObserver(this) { reason ->
+            onUnderlyingNetworkChanged(reason)
         }.also { it.start() }
     }
 
@@ -350,6 +357,7 @@ internal class SstpVpnService : VpnService() {
     /** Called once the tunnel is fully up, so the network-reconnect budget resets. */
     internal fun onConnectionEstablished() {
         networkReconnectAttempts = 0
+        lastEstablishedAtMs = SystemClock.elapsedRealtime()
     }
 
     /**
@@ -386,9 +394,25 @@ internal class SstpVpnService : VpnService() {
     }
 
     /** Called by the connectivity observer when the underlying network changes. */
-    private fun onUnderlyingNetworkChanged() {
+    private fun onUnderlyingNetworkChanged(reason: String) {
+        ConnectionLog.append("SERVICE", "Network change: $reason")
         if (manuallyDisconnected) return
         if (connectionStatus != OscPrefKey.Connected.name) return
+
+        // Ignore changes that arrive right after the tunnel came up: bringing the
+        // TUN interface up/down (e.g. while switching protocols) briefly reshapes
+        // the underlying networks and would otherwise start a reconnect that
+        // itself reshapes them again — an endless loop, since every successful
+        // reconnect resets the attempt budget. A real network switch still
+        // surfaces through the session's socket error (handleSessionError).
+        val sinceEstablished = SystemClock.elapsedRealtime() - lastEstablishedAtMs
+        if (lastEstablishedAtMs > 0L && sinceEstablished < NETWORK_SETTLE_MS) {
+            ConnectionLog.append(
+                "SERVICE",
+                "Ignoring network change ${sinceEstablished}ms after connect (settle window)"
+            )
+            return
+        }
 
         ConnectionLog.append("SERVICE", "Underlying network changed; reconnecting")
         scheduleNetworkReconnect()

@@ -49,6 +49,7 @@ class ConnectionController(
         private const val MAX_RECONNECT_ATTEMPTS = 3
         private const val RECONNECT_DELAY_MS = 3000L
         private const val STATS_INTERVAL_MS = 1000L
+        private const val LINK_STATS_LOG_INTERVAL_MS = 5000L
         private const val RX_BATCH_MAX_PACKETS = 32  // Phase 13D: frames per receiveBatch call
         private const val NATIVE_TEARDOWN_TIMEOUT_MS = 500L
     }
@@ -94,6 +95,11 @@ class ConnectionController(
     // attempt keeps the connection count at 1, so the attempt counter (and its
     // stage) is what changes while multi-connection is being retried.
     private var lastLoggedAdditionalAttempts = -1
+
+    // Last time the per-link traffic split was written to the app log. Throttled
+    // separately from the session snapshot so a multi-connection session gets a
+    // periodic, low-noise view of how the load spreads across its TCP links.
+    private var lastLinkStatsLogAtMs = 0L
 
     private var currentState: ConnectionState = ConnectionState.DISCONNECTED
         set(value) {
@@ -325,23 +331,28 @@ class ConnectionController(
         Log.d(TAG, "Starting connection to ${config.serverHost}:${config.serverPort}")
         SoftEtherLog.startSession(
             "server=${config.serverHost}:${config.serverPort} hub=${config.virtualHub} " +
-                "user=${config.username} tcp=${config.useTcp} udp=${config.useUdp} " +
+                "user=${config.username} " +
+                "udpAcceleration=${if (config.useUdp) "on" else "off"} " +
                 "clientMac=${config.clientMac.ifBlank { "<derived>" }}"
         )
         // Requested SoftEther session options (Windows-client equivalents). The
         // server decides the final values; the negotiated result is logged once
-        // the session is up (see logSessionInfo()).
+        // the session is up (see logSessionInfo()). config.useUdp is the profile's
+        // "UDP acceleration enabled" (the inverse of "Disable UDP Acceleration");
+        // the label used to print the inverse of that flag, so an enabled option
+        // read as disabled and vice versa.
         SoftEtherLog.append(
             "SESSION",
             "Requested: tcpConnections=${config.maxConnections} " +
                 "establishInterval=${config.establishIntervalMs}ms " +
                 "sslEncrypt=${config.useEncrypt} " +
-                "udpAcceleration=${!config.useUdp} " +
-                "qos=${config.qos} udpPort=${config.udpPort}"
+                "udpAcceleration=${if (config.useUdp) "on" else "off"} " +
+                "qos=${if (config.qos) "on" else "off"} udpPort=${config.udpPort}"
         )
         // Fresh session: forget the previous counters so the first check always logs.
         lastLoggedConnectionCount = -1
         lastLoggedAdditionalAttempts = -1
+        lastLinkStatsLogAtMs = 0L
         currentState = ConnectionState.CONNECTING
         isCancelled.set(false)
 
@@ -452,7 +463,12 @@ class ConnectionController(
         // They are opened while the VPN is already up, so without this the
         // connect() is routed into the tunnel and hangs until the timeout
         // (the "addlStage=tcp addlLastMs=30000" symptom).
-        client.setProtectCallback { fd -> service.protect(fd) }
+        val protectOk = client.setProtectCallback(service)
+        SoftEtherLog.append(
+            "SESSION",
+            if (protectOk) "Socket protect hook installed (VpnService.protect)"
+            else "Socket protect hook NOT installed — additional links may route into the tunnel"
+        )
         // SoftEther session options (Windows-client equivalents) from the profile.
         // Compression is always off: the app no longer exposes it (the server-side
         // zlib path never worked reliably and tunnel data is mostly incompressible).
@@ -644,6 +660,8 @@ class ConnectionController(
      */
     fun disconnect() {
         Log.d(TAG, "Disconnecting VPN")
+        // Capture the end-of-session summary before the native handle is freed.
+        logSessionEnd("Disconnected")
         isCancelled.set(true)
         client.externalHandle = 0
 
@@ -702,12 +720,34 @@ class ConnectionController(
     }
 
     /**
+     * Writes the end-of-session summary to the app log: the session totals plus
+     * the per-link traffic split. A connect line already exists, so a matching
+     * end line is what makes it possible to read how long a tunnel lived, how
+     * much it carried and how the load spread across its TCP links — without a
+     * logcat and without the periodic per-link lines (which are off by default).
+     * Safe to call more than once; the second call finds no handle and returns.
+     */
+    private fun logSessionEnd(reason: String) {
+        if (nativeHandle == 0L) return
+        SoftEtherLog.append(
+            "PHASE",
+            "$reason — session ended (tx=${packetsSent.get()}p/${bytesSent.get()}B " +
+                "rx=${packetsReceived.get()}p/${bytesReceived.get()}B)"
+        )
+        logLinkStats(force = true)
+    }
+
+    /**
      * Quickly destroy native resources without graceful disconnect (non-blocking).
      * Sets isCancelled, stops TunTerminal, closes fd, and frees the native handle.
      * Does NOT send state change callbacks — caller is responsible for state updates.
      */
     fun destroyResources() {
         Log.d(TAG, "Destroying resources (fast cleanup)")
+        // Teardown on the service path goes through here, not disconnect(), so
+        // the end-of-session summary has to be captured before the handle dies —
+        // otherwise the log shows a session that starts and never ends.
+        logSessionEnd("Session stopped")
         isCancelled.set(true)
         client.externalHandle = 0
 
@@ -818,7 +858,6 @@ class ConnectionController(
                     if (result > 0) {
                         bytesSent.addAndGet(result.toLong())
                         packetsSent.incrementAndGet()
-                        maybePublishTrafficSnapshot()
                     } else if (result < 0 && isConnected() && !isCancelled.get()) {
                         Log.w(TAG, "Send failed: $result")
                         SoftEtherLog.append("ERROR", "Send to tunnel failed: native=$result")
@@ -868,7 +907,6 @@ class ConnectionController(
                             if (written > 0) {
                                 bytesReceived.addAndGet(total.toLong())
                                 packetsReceived.addAndGet(written.toLong())
-                                maybePublishTrafficSnapshot()
                             }
                             // Inbound data also proves the link is alive. Without
                             // this the keepalive watchdog only sees "activity" on
@@ -892,11 +930,27 @@ class ConnectionController(
                             keepAliveManager.recordReceived()
                         }
                         else -> {
-                            // Error receiving
-                            Log.e(TAG, "Receive error: $total")
-                            SoftEtherLog.append("ERROR", "Receive loop error: native=$total")
+                            // Error receiving. When a teardown is already under
+                            // way (user disconnect, protocol switch, reconnect)
+                            // the native layer reports the closed socket as an
+                            // error too; that is expected, not a failure, so it
+                            // must not be written as an ERROR line — it made a
+                            // clean disconnect look like a crash.
+                            val detail = client.getLastLinkError()
+                            Log.e(TAG, "Receive error: $total ($detail)")
                             if (isConnected() && !isCancelled.get()) {
+                                SoftEtherLog.append(
+                                    "ERROR",
+                                    "Receive loop error: native=$total" +
+                                        if (detail != null) " ($detail)" else ""
+                                )
                                 scope.launch { attemptReconnect() }
+                            } else {
+                                SoftEtherLog.append(
+                                    "DATA",
+                                    "Receive loop stopped (session closing): native=$total" +
+                                        if (detail != null) " ($detail)" else ""
+                                )
                             }
                             break
                         }
@@ -1006,7 +1060,12 @@ connectInFlight.set(true)
             // Publish the handle so the setters below (timeout, session
             // options) target this connection instead of handle 0.
             client.externalHandle = nativeHandle
-            client.setProtectCallback { fd -> service.protect(fd) }
+            val reconnectProtectOk = client.setProtectCallback(service)
+            SoftEtherLog.append(
+                "SESSION",
+                if (reconnectProtectOk) "Socket protect hook installed (VpnService.protect)"
+                else "Socket protect hook NOT installed — additional links may route into the tunnel"
+            )
 
             client.setTimeout(config.connectTimeoutMs)
 
@@ -1227,7 +1286,14 @@ connectInFlight.set(true)
             append("addlAttempts=${info.additionalAttempts} ")
             append("addlFailed=${info.additionalFailedCount} ")
             append("addlStage=${info.additionalLastStageName} ")
-            append("addlLastMs=${info.additionalLastAttemptMs}")
+            append("addlLastMs=${info.additionalLastAttemptMs} ")
+            // Visibility for the socket-protect hook. It was silently missing in
+            // an earlier build, and the only symptom was extra links that the
+            // server never counted, so it is logged on every snapshot.
+            append("protect=${if (info.protectAvailable) info.protectStateName else "MISSING"}")
+            if (info.additionalFailedCount > 0) {
+                append(" addlFailStage=${info.additionalLastFailStageName}")
+            }
             if (info.additionalLastError != 0) {
                 append(" addlServerError=${info.additionalLastError}")
             }
@@ -1241,8 +1307,60 @@ connectInFlight.set(true)
                 "sslSessionEncrypt=${info.serverUseEncrypt} " +
                 "compress=${info.serverUseCompress} " +
                 "natT=${info.usingNatT} " +
+                // The profile's UDP-acceleration and QoS choices, repeated here so
+                // the negotiated snapshot also shows which options were requested
+                // (the server does not echo either flag back).
+                "udpAccel=${if (config.useUdp) "on" else "off"} " +
+                "qos=${if (config.qos) "on" else "off"} " +
                 additional
         )
+        // Native specifics of the last finished additional-connect attempt.
+        // Only logged when an attempt has failed, so a healthy session stays quiet.
+        if (info.additionalFailedCount > 0) {
+            client.getSessionDetail()?.let { SoftEtherLog.append("SESSION", "Addl detail: $it") }
+        }
+    }
+
+    /**
+     * Writes the per-link traffic split to the app log, throttled to
+     * LINK_STATS_LOG_INTERVAL_MS and only when more than one TCP link is up.
+     * The session-wide counters cannot tell whether the extra connections carry
+     * any traffic; this line splits the bytes by the socket that moved them, so
+     * the distribution across the profile's TCP connections is visible without
+     * a logcat.
+     *
+     * The periodic call is off unless [SoftEtherLog.perLinkStatsEnabled] is set:
+     * during an idle session the line is identical every 5 s and buries the rest
+     * of the log. The end-of-session call passes force = true so the final split
+     * is always recorded — that is the line worth reading, and it is the only
+     * one left when the toggle is off.
+     */
+    private fun logLinkStats(force: Boolean = false) {
+        if (nativeHandle == 0L) return
+        if (!force && !SoftEtherLog.perLinkStatsEnabled) return
+        val info = client.getSessionInfo() ?: return
+        if (info.numConnections <= 1) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastLinkStatsLogAtMs < LINK_STATS_LOG_INTERVAL_MS) return
+        lastLinkStatsLogAtMs = now
+        val (tx, rx) = client.getLinkStats() ?: return
+        val parts = ArrayList<String>(tx.size)
+        for (i in tx.indices) {
+            // Slots that never moved a byte stay out of the line (an active link
+            // with zero traffic is indistinguishable from a dead one here).
+            if (i > 0 && tx[i] == 0L && rx[i] == 0L) continue
+            val name = if (i == 0) "primary" else "addl$i"
+            parts += "$name tx=${formatBytes(tx[i])} rx=${formatBytes(rx[i])}"
+        }
+        if (parts.isEmpty()) return
+        SoftEtherLog.append("DATA", "Link split: " + parts.joinToString(" | "))
+    }
+
+    /** Compact byte formatter for the app log (B / K / M). */
+    private fun formatBytes(v: Long): String = when {
+        v >= 1_048_576L -> String.format(java.util.Locale.US, "%.1fM", v / 1_048_576.0)
+        v >= 1024L -> String.format(java.util.Locale.US, "%.1fK", v / 1024.0)
+        else -> "${v}B"
     }
 
     /**
@@ -1257,11 +1375,29 @@ connectInFlight.set(true)
                 try {
                     delay(STATS_INTERVAL_MS)
                     if (isConnected()) {
+                        // Publish the speed snapshot ONLY here, once per second.
+                        // It used to also be published from the hot send/receive
+                        // paths, whose races with this timer made the interval
+                        // between snapshots jump around — and since the speed is
+                        // diff/interval, the notification's up/down figures
+                        // flickered (and looked like per-link speeds). The byte
+                        // counters already sum every TCP link, so a single
+                        // snapshot per second is both correct and stable.
                         publishTrafficSnapshot()
                         // Surface additional connections coming up or dropping.
                         logSessionInfo()
+                        // Periodically show how the load spreads across the links.
+                        logLinkStats()
                         Log.d(TAG, "Stats: sent=${bytesSent.get()} bytes (${packetsSent.get()} pkts), " +
                                 "received=${bytesReceived.get()} bytes (${packetsReceived.get()} pkts)")
+                        // Phase 13G: surface native health counters alongside the
+                        // traffic snapshot (same 1 s cadence, debug-level only).
+                        client.getStats()?.let { st ->
+                            Log.d(TAG,
+                                "stats: tx=${st.txPackets}p/${st.txBytes}B rx=${st.rxPackets}p/${st.rxBytes}B " +
+                                "skipped=${st.rxSkippedBlocks} rudp(rx=${st.rudpRxPackets} ovf=${st.rudpOverflowCount} " +
+                                "gaps=${st.rudpTickGaps} susp=${st.rudpDataSuspended})")
+                        }
                     }
                 } catch (e: CancellationException) {
                     break
@@ -1309,21 +1445,6 @@ connectInFlight.set(true)
         lastPublishedReceivedBytes = currentReceivedBytes
         lastPublishedAtMs = now
         onTrafficUpdate(snapshot)
-    }
-
-    private fun maybePublishTrafficSnapshot() {
-        val now = System.currentTimeMillis()
-        if (now - lastPublishedAtMs >= STATS_INTERVAL_MS) {
-            publishTrafficSnapshot()
-            // Phase 13G: surface native health counters alongside the
-            // traffic snapshot (same 1 s throttle, debug-level only)
-            client.getStats()?.let { st ->
-                Log.d(TAG,
-                    "stats: tx=${st.txPackets}p/${st.txBytes}B rx=${st.rxPackets}p/${st.rxBytes}B " +
-                    "skipped=${st.rxSkippedBlocks} rudp(rx=${st.rudpRxPackets} ovf=${st.rudpOverflowCount} " +
-                    "gaps=${st.rudpTickGaps} susp=${st.rudpDataSuspended})")
-            }
-        }
     }
 
     private fun startNativeStateMonitor() {

@@ -114,17 +114,25 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
                 result.success(true)
             }
             "checkLastConnectionStatus" -> result.success(mapState(SoftEtherVpnService.currentState))
+            "isServiceRunning" -> result.success(SoftEtherVpnService.instanceAlive)
             "getAssignedIp" -> result.success(SoftEtherVpnService.currentAssignedIp)
+            "getConnectionUptime" -> result.success(SoftEtherVpnService.connectionUptimeMs())
             "getTrafficTotals" -> {
                 val snapshot = SoftEtherVpnService.lastTrafficSnapshot
                 result.success(listOf(snapshot.inBytes * 8L, snapshot.outBytes * 8L))
             }
             "setConnectionLogging" -> {
+                // Only flip the flag here. The "Connection logging enabled"
+                // notice is written by the SSTP plugin, which owns the shared
+                // log file — logging it in both plugins duplicated the line
+                // (the "[LOG]" and "[SERVICE]" pairs the user saw).
                 SoftEtherLog.enabled = call.argument<Boolean>("enabled") ?: false
-                SoftEtherLog.append(
-                    "SERVICE",
-                    if (SoftEtherLog.enabled) "Connection logging enabled" else "Connection logging disabled"
-                )
+                result.success(true)
+            }
+            "setPerLinkStats" -> {
+                // Periodic (every 5 s) per-link traffic split in the log. The
+                // end-of-session split is written regardless of this flag.
+                SoftEtherLog.perLinkStatsEnabled = call.argument<Boolean>("enabled") ?: false
                 result.success(true)
             }
             "getConnectionLog" -> result.success(SoftEtherLog.read())

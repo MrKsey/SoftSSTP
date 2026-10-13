@@ -270,16 +270,40 @@ class SstpFlutterPlugin: FlutterPlugin, MethodCallHandler , ActivityAware, Flutt
       }
 
       call.method.equals("setConnectionLogging") -> {
-        ConnectionLog.enabled = call.argument<Boolean>("enabled") ?: false
-        ConnectionLog.append(
-          "LOG",
-          if (ConnectionLog.enabled) "Connection logging enabled" else "Connection logging disabled"
-        )
+        val enabled = call.argument<Boolean>("enabled") ?: false
+        // Log the transition exactly once, and only from this plugin. Both
+        // plugins write to the SAME log file and both receive the same value, so
+        // logging the switch in each one produced duplicate "Connection logging
+        // enabled" lines. Repeated calls with an unchanged value stay silent.
+        if (ConnectionLog.enabled != enabled) {
+          if (!enabled) {
+            // Write the disable notice while logging is still on (append() is a
+            // no-op once the flag is cleared).
+            ConnectionLog.append("LOG", "Connection logging disabled")
+          }
+          ConnectionLog.enabled = enabled
+          if (enabled) {
+            ConnectionLog.append("LOG", "Connection logging enabled")
+            // Record the build the log came from: several test builds share the
+            // same version name while the native library differs.
+            ConnectionLog.append("LOG", "App version: ${ConnectionLog.appVersion()}")
+          }
+        }
         result.success(true)
       }
 
       call.method.equals("getConnectionLog") -> {
         result.success(ConnectionLog.read())
+      }
+
+      call.method.equals("logMessage") -> {
+        // Lets the Dart layer write lifecycle markers (protocol switch, teardown)
+        // into the shared connection log, which is otherwise written only from
+        // Kotlin and therefore blind to what the app decided to do.
+        val tag = call.argument<String>("tag") ?: "APP"
+        val message = call.argument<String>("message") ?: ""
+        if (message.isNotEmpty()) ConnectionLog.append(tag, message)
+        result.success(true)
       }
 
       call.method.equals("clearConnectionLog") -> {

@@ -55,7 +55,9 @@ static void* take_ssl_ctx_slot(void** slot) {
 #define MAX_BLOCK_SIZE   (1600 * 1600)  // same as SoftEther MAX_PACKET_SIZE safety
 #define COMPRESS_MAGIC   0xDEADBEEFCAFEFACELL
 
-// Read exactly `len` bytes from the SSL connection. Returns 0 on success, -1 on error.
+// Read exactly `len` bytes from the SSL connection.
+// Returns 0 on success, SE_SSL_READ_TIMEOUT when the socket timed out before any
+// byte of this block arrived (no data yet), -1 on error/partial read.
 static int ssl_read_all(softether_connection_t* conn, uint8_t* buf, int len) {
     int total = 0;
     while (total < len) {
@@ -63,6 +65,12 @@ static int ssl_read_all(softether_connection_t* conn, uint8_t* buf, int len) {
             return -1;
         }
         int ret = ssl_read((ssl_context_t*)conn->ssl, buf + total, len - total);
+        if (ret == SE_SSL_READ_TIMEOUT) {
+            // Nothing arrived within the socket timeout. If part of the block is
+            // already in hand the stream is desynced — a real error; otherwise
+            // this is simply "no data yet" and the link stays alive.
+            return (total == 0) ? SE_SSL_READ_TIMEOUT : -1;
+        }
         if (ret <= 0) {
             return -1;
         }
@@ -96,7 +104,28 @@ static int ssl_write_all(softether_connection_t* conn, const uint8_t* buf, int l
     return 0;
 }
 
-// Read exactly `len` bytes from raw TCP socket. Returns 0 on success, -1 on error.
+// Per-link io_mutex for a raw (non-SSL) socket, resolved by fd. Defined below.
+static pthread_mutex_t* link_io_resolve_fd(softether_connection_t* conn, int socket_fd);
+
+// Record why a data link failed to read, so the app log can name the link and
+// the cause instead of a bare native=-1. `add_idx` is the additional slot, or
+// -1 for the primary link. `detail` is a short pre-formatted reason.
+static void record_link_error(softether_connection_t* conn, int add_idx,
+                              const char* detail) {
+    if (conn == NULL || detail == NULL) return;
+    if (add_idx >= 0) {
+        snprintf(conn->last_link_error, sizeof(conn->last_link_error),
+                 "additional[%d] %s", add_idx, detail);
+    } else {
+        snprintf(conn->last_link_error, sizeof(conn->last_link_error),
+                 "primary %s", detail);
+    }
+}
+
+
+// Read exactly `len` bytes from raw TCP socket.
+// Returns 0 on success, SE_SSL_READ_TIMEOUT when the socket timed out before any
+// byte arrived (no data yet), -1 on error/partial read.
 static int raw_read_all(softether_connection_t* conn, uint8_t* buf, int len) {
     int total = 0;
     while (total < len) {
@@ -104,13 +133,19 @@ static int raw_read_all(softether_connection_t* conn, uint8_t* buf, int len) {
             return -1;
         }
         int ret = (int)recv(conn->socket_fd, buf + total, len - total, 0);
-        if (ret <= 0) {
-            // EAGAIN = SO_RCVTIMEO expired; return instead of spinning so a
-            // stalled primary link cannot hang the caller forever.
-            if (ret < 0 && errno == EINTR) {
+        if (ret < 0) {
+            if (errno == EINTR) {
                 continue;
             }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // SO_RCVTIMEO expired: no data yet (see SE_SSL_READ_TIMEOUT).
+                return (total == 0) ? SE_SSL_READ_TIMEOUT : -1;
+            }
             LOGE("raw_read_all: recv returned %d (errno=%d)", ret, errno);
+            return -1;
+        }
+        if (ret == 0) {
+            LOGE("raw_read_all: peer closed (recv=0)");
             return -1;
         }
         total += ret;
@@ -119,11 +154,27 @@ static int raw_read_all(softether_connection_t* conn, uint8_t* buf, int len) {
 }
 
 // Write exactly `len` bytes to raw TCP socket. Returns 0 on success, -1 on error.
+//
+// The write runs under the link's io_mutex even though raw mode has no SSL
+// object to protect. A socket has several writers on different threads: the TUN
+// send path (holding write_mutex), the periodic keepalive sweep and the ARP
+// responder (both driven by the receive loop, holding nothing). A block the
+// kernel accepts only partially — which is exactly what happens once the send
+// buffer fills during a saturated upload — would otherwise let another thread's
+// bytes land in the middle of it, and the server resets the session on the
+// desynchronized stream. That was the "connection drops during a speed test"
+// symptom, and it only ever hit raw-TCP sessions, never TLS ones (the SSL path
+// already held this lock).
 static int raw_write_all(softether_connection_t* conn, const uint8_t* buf, int len) {
+    pthread_mutex_t* io = link_io_resolve_fd(conn, conn->socket_fd);
+    if (io != NULL) pthread_mutex_lock(io);
+
+    int rc = 0;
     int total = 0;
     while (total < len) {
         if (conn->state == STATE_DISCONNECTED || conn->state == STATE_DISCONNECTING) {
-            return -1;
+            rc = -1;
+            break;
         }
         int ret = (int)send(conn->socket_fd, buf + total, len - total, 0);
         if (ret <= 0) {
@@ -132,20 +183,28 @@ static int raw_write_all(softether_connection_t* conn, const uint8_t* buf, int l
                 continue;
             }
             LOGE("raw_write_all: send returned %d (errno=%d)", ret, errno);
-            return -1;
+            rc = -1;
+            break;
         }
         total += ret;
     }
-    return 0;
+
+    if (io != NULL) pthread_mutex_unlock(io);
+    return rc;
 }
 
 // ---- Socket-specific read helpers (for multi-connection) ----
 
 // Read exactly `len` bytes from a specific SSL context (not conn->ssl).
+// Returns 0 on success, SE_SSL_READ_TIMEOUT when the socket timed out before any
+// byte arrived (no data yet), -1 on error/partial read.
 static int ssl_read_all_ctx(ssl_context_t* ssl, uint8_t* buf, int len) {
     int total = 0;
     while (total < len) {
         int ret = ssl_read(ssl, buf + total, len - total);
+        if (ret == SE_SSL_READ_TIMEOUT) {
+            return (total == 0) ? SE_SSL_READ_TIMEOUT : -1;
+        }
         if (ret <= 0) {
             return -1;
         }
@@ -157,6 +216,8 @@ static int ssl_read_all_ctx(ssl_context_t* ssl, uint8_t* buf, int len) {
 // Read exactly `len` bytes from a specific raw TCP fd (not conn->socket_fd).
 // EAGAIN means SO_RCVTIMEO expired (or the caller polled but data was consumed):
 // bail out instead of spinning, so a stalled link cannot hang the receive loop.
+// Returns 0 on success, SE_SSL_READ_TIMEOUT when nothing arrived (no data yet),
+// -1 on error/partial read.
 static int raw_read_all_fd(int fd, uint8_t* buf, int len) {
     int total = 0;
     while (total < len) {
@@ -164,6 +225,9 @@ static int raw_read_all_fd(int fd, uint8_t* buf, int len) {
         if (ret < 0) {
             if (errno == EINTR) {
                 continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return (total == 0) ? SE_SSL_READ_TIMEOUT : -1;
             }
             return -1;
         }
@@ -222,6 +286,20 @@ static int link_io_live(softether_connection_t* conn, int slot_idx,
             conn->additional[slot_idx].socket_fd == socket_fd) ? 0 : -1;
 }
 
+// Per-link io_mutex for a raw (non-SSL) socket. Raw mode has no SSL context to
+// key on, so the fd is the link identity. A retired slot has socket_fd == -1 and
+// therefore never matches. Returns NULL when the fd belongs to no live link.
+static pthread_mutex_t* link_io_resolve_fd(softether_connection_t* conn, int socket_fd) {
+    if (conn == NULL || socket_fd < 0) return NULL;
+    if (socket_fd == conn->socket_fd) return &conn->io_mutex;
+    for (int i = 0; i < MAX_SE_CONNECTIONS; i++) {
+        if (conn->additional[i].socket_fd == socket_fd) {
+            return &conn->additional[i].io_mutex;
+        }
+    }
+    return NULL;
+}
+
 // Read `len` bytes from a specific socket (SSL or raw).
 static int data_read_all_sock(softether_connection_t* conn,
                               void* ssl, int socket_fd,
@@ -247,11 +325,14 @@ static int data_read_all_sock(softether_connection_t* conn,
 }
 
 // Read a big-endian uint32 from a specific socket.
+// Returns 0 on success, SE_SSL_READ_TIMEOUT when no byte arrived (no data yet),
+// -1 on error.
 static int read_uint32_sock(softether_connection_t* conn,
                             void* ssl, int socket_fd,
                             uint32_t* out) {
     uint8_t buf[4];
-    if (data_read_all_sock(conn, ssl, socket_fd, buf, 4) != 0) return -1;
+    int r = data_read_all_sock(conn, ssl, socket_fd, buf, 4);
+    if (r != 0) return r;
     *out = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
            ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
     return 0;
@@ -262,6 +343,12 @@ static int data_write_all_sock(softether_connection_t* conn,
                                void* ssl, int socket_fd,
                                const uint8_t* buf, int len) {
     if (!conn->use_ssl_data) {
+        // Same serialization rationale as raw_write_all(): several threads write
+        // to this socket (send path, keepalive sweep, ARP responder), and a
+        // partial send under load would let their bytes interleave.
+        pthread_mutex_t* io = link_io_resolve_fd(conn, socket_fd);
+        if (io != NULL) pthread_mutex_lock(io);
+        int rc = 0;
         int total = 0;
         while (total < len) {
             int ret = (int)send(socket_fd, buf + total, len - total, 0);
@@ -269,11 +356,13 @@ static int data_write_all_sock(softether_connection_t* conn,
                 // EAGAIN = SO_SNDTIMEO expired: report failure instead of
                 // spinning forever on a saturated or stalled link.
                 if (ret < 0 && errno == EINTR) continue;
-                return -1;
+                rc = -1;
+                break;
             }
             total += ret;
         }
-        return 0;
+        if (io != NULL) pthread_mutex_unlock(io);
+        return rc;
     }
 
     int slot_idx = -1;
@@ -326,9 +415,12 @@ static int data_write_all(softether_connection_t* conn, const uint8_t* buf, int 
 }
 
 // Read a big-endian uint32 from the data channel.
+// Returns 0 on success, SE_SSL_READ_TIMEOUT when no byte arrived (no data yet),
+// -1 on error.
 static int read_uint32(softether_connection_t* conn, uint32_t* out) {
     uint8_t buf[4];
-    if (data_read_all(conn, buf, 4) != 0) return -1;
+    int r = data_read_all(conn, buf, 4);
+    if (r != 0) return r;
     *out = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
            ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
     return 0;
@@ -399,6 +491,9 @@ int softether_transmit_block_nolock(softether_connection_t* conn,
                 ? data_write_all(conn, block, (int)block_len)
                 : data_write_all_sock(conn, send_ssl, send_fd, block, (int)block_len);
             if (wr == 0) {
+                // Attribute the bytes to the link that actually carried them, so
+                // the app log can show how traffic spreads across the session.
+                conn->link_tx_bytes[send_idx] += block_len;
                 return 0;
             }
         }
@@ -566,7 +661,8 @@ int softether_send_packet(softether_connection_t* conn, uint16_t command,
 // Receive data blocks from the connection.
 // Returns the first data block in `payload`, sets `payload_len`.
 // Sets `command` to CMD_DATA for data blocks, CMD_KEEPALIVE for keepalive.
-// Returns total bytes read on success, -1 on error.
+// Returns total bytes read on success, 0 when the socket timed out with no data
+// (nothing to read), -1 on error.
 int softether_receive_packet(softether_connection_t* conn, uint16_t* command,
                              uint8_t* payload, uint32_t* payload_len, uint32_t max_payload) {
     if (conn == NULL || command == NULL) {
@@ -583,7 +679,13 @@ int softether_receive_packet(softether_connection_t* conn, uint16_t* command,
 
     // Read block count (or keepalive magic)
     uint32_t block_count = 0;
-    if (read_uint32(conn, &block_count) != 0) {
+    int bc = read_uint32(conn, &block_count);
+    if (bc == SE_SSL_READ_TIMEOUT) {
+        // Socket timed out with no data — report "nothing to read" rather than
+        // an error, so a poll-style status check keeps the link alive.
+        return 0;
+    }
+    if (bc != 0) {
         LOGE("Failed to read block count");
         return -1;
     }
@@ -857,7 +959,8 @@ int softether_process_keepalive(softether_connection_t* conn) {
     uint32_t payload_len = 0;
 
     int result = softether_receive_packet(conn, &command, buffer, &payload_len, sizeof(buffer));
-    if (result < 0) return -1;
+    // result 0 = socket timeout (no data, `command` not set), < 0 = error.
+    if (result <= 0) return result;
 
     if (command == CMD_KEEPALIVE) {
         // Respond with our own keepalive
@@ -1013,6 +1116,35 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
         }
     }
 
+    // Phase 21: resume an in-flight multi-block message before polling. When the
+    // receive queue filled up mid-message a previous call stopped reading and
+    // remembered the unread remainder plus the socket it belongs to; continue
+    // exactly there so no block is dropped. Setting ssl_pending_idx also skips
+    // the poll below — the remaining blocks are already in flight on that link
+    // (read_uint32_sock reports "no data yet" and keeps the state if not).
+    if (conn->recv_msg_pending_blocks > 0) {
+        int resume_idx = -1;
+        for (int t = 0; t < tcp_count; t++) {
+            if (tcp_info[t].fd == conn->recv_msg_fd &&
+                tcp_info[t].ssl == conn->recv_msg_ssl) {
+                resume_idx = t;
+                break;
+            }
+        }
+        if (resume_idx < 0) {
+            // The socket carrying the partial message was retired (server hung
+            // up / failover): drop the remainder and start clean on the next
+            // message. The rest of the session is unaffected.
+            LOGW("fill_recv_queue: in-flight message socket fd=%d gone, dropping %u partial block(s)",
+                 conn->recv_msg_fd, conn->recv_msg_pending_blocks);
+            conn->recv_msg_pending_blocks = 0;
+            conn->recv_msg_ssl = NULL;
+            conn->recv_msg_fd = -1;
+            return 0;
+        }
+        ssl_pending_idx = resume_idx;
+    }
+
     if (ssl_pending_idx < 0) {
         // No SSL-buffered data — poll all sockets
         // 100ms idle wait in both paths: poll wakes immediately on data, so
@@ -1026,6 +1158,9 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
         }
         if (poll_ret < 0) {
             LOGE("fill_recv_queue: poll error: %d", errno);
+            char _why[64];
+            snprintf(_why, sizeof(_why), "poll failed errno=%d", errno);
+            record_link_error(conn, -1, _why);
             return -1;
         }
 
@@ -1033,19 +1168,47 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
         __sync_synchronize();
         if (conn->state == STATE_DISCONNECTING) return -1;
 
+        // Link-health bookkeeping for the send path: the link that just became
+        // readable is reset to zero, every other link records one more poll
+        // without data. This mirrors the reference client's TCPSOCK::LateCount
+        // (Connection.c:1370 increments it on SOCK_LATER, :1396 clears it when
+        // data arrives) and lets softether_select_send_socket() stop handing
+        // blocks to a link the server has quietly stopped using.
+        for (int t = 0; t < tcp_count; t++) {
+            int pfd_idx = -1;
+            for (nfds_t i = 0; i < nfds; i++) {
+                if (fds[i].fd == tcp_info[t].fd) { pfd_idx = (int)i; break; }
+            }
+            int has_data = (pfd_idx >= 0) && (fds[pfd_idx].revents & POLLIN);
+            if (tcp_info[t].is_additional) {
+                int idx = tcp_info[t].additional_idx;
+                if (idx >= 0) {
+                    conn->additional[idx].late_count =
+                        has_data ? 0 : conn->additional[idx].late_count + 1;
+                }
+            } else {
+                conn->primary_late_count = has_data ? 0 : conn->primary_late_count + 1;
+            }
+        }
+
         // Check for UDP data first
         for (nfds_t i = 0; i < nfds; i++) {
             if (fds[i].revents & POLLNVAL) {
                 LOGE("fill_recv_queue: socket fd=%d invalid", fds[i].fd);
+                char _why[64];
+                snprintf(_why, sizeof(_why), "fd=%d POLLNVAL", fds[i].fd);
+                record_link_error(conn, -1, _why);
                 return -1;
             }
             if ((fds[i].revents & (POLLERR | POLLHUP)) && !(fds[i].revents & POLLIN)) {
                 LOGE("fill_recv_queue: socket fd=%d error (revents=0x%x)", fds[i].fd, fds[i].revents);
                 // If this is an additional socket, mark it as failed but don't kill the connection
                 int is_additional = 0;
+                int add_idx = -1;
                 for (int t = 0; t < tcp_count; t++) {
                     if (tcp_info[t].fd == fds[i].fd && tcp_info[t].is_additional) {
                         is_additional = 1;
+                        add_idx = tcp_info[t].additional_idx;
                         break;
                     }
                 }
@@ -1053,6 +1216,12 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
                     LOGW("Additional socket fd=%d failed, will be cleaned up", fds[i].fd);
                     continue;  // Don't return error for additional socket failures
                 }
+                char _why[80];
+                snprintf(_why, sizeof(_why), "fd=%d revents=0x%x (%s%s)",
+                         fds[i].fd, fds[i].revents,
+                         (fds[i].revents & POLLHUP) ? "POLLHUP" : "",
+                         (fds[i].revents & POLLERR) ? "POLLERR" : "");
+                record_link_error(conn, -1, _why);
                 return -1;
             }
         }
@@ -1096,6 +1265,12 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
         int sel_fd = tcp_info[ssl_pending_idx].fd;
         int sel_is_additional = tcp_info[ssl_pending_idx].is_additional;
         int sel_add_idx = tcp_info[ssl_pending_idx].additional_idx;
+        // Which link this read is charged to: 0 = primary, i+1 = additional slot i.
+        int link_index = (sel_is_additional && sel_add_idx >= 0) ? (sel_add_idx + 1) : 0;
+        if (link_index > MAX_SE_CONNECTIONS) link_index = 0;
+        // Bytes delivered to the queue during this call; committed to the link's
+        // counter at the end so a paused/partial message is not double-counted.
+        uint64_t rx_bytes_here = 0;
 
         // Revalidate: check that the SSL pointer is still valid (not freed by disconnect).
         // This guards against concurrent softether_disconnect / softether_close_additional
@@ -1130,7 +1305,15 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
         // a concurrent keepalive/data-write on the same link (tx failover takes
         // the same lock), preventing a use-after-free on a mid-IO context.
         // Returns 0 to keep connection alive, or propagates -1 for primary socket failures
-        #define CLOSE_FAILED_ADDITIONAL_SOCKET() do { \
+        #define CLOSE_FAILED_ADDITIONAL_SOCKET(_reason) do { \
+            conn->recv_msg_pending_blocks = 0; \
+            conn->recv_msg_ssl = NULL; \
+            conn->recv_msg_fd = -1; \
+            { \
+                char _why[96]; \
+                snprintf(_why, sizeof(_why), "fd=%d %s", sel_fd, (_reason)); \
+                record_link_error(conn, sel_is_additional ? sel_add_idx : -1, _why); \
+            } \
             if (sel_is_additional && sel_add_idx >= 0) { \
                 LOGW("Additional socket fd=%d read failure, marking inactive", sel_fd); \
                 softether_tcp_sock_t* _ts = &conn->additional[sel_add_idx]; \
@@ -1161,52 +1344,118 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
         LOGT("fill_recv_queue: reading from %s socket fd=%d",
              sel_is_additional ? "additional" : "primary", sel_fd);
 
-        // Read block count (or keepalive magic)
+        // Read block count (or keepalive magic). When resuming a message paused
+        // on a previous call the count was already consumed then, so pick up the
+        // remembered remainder instead of reading a fresh header.
+        int resuming = (conn->recv_msg_pending_blocks > 0);
         uint32_t block_count = 0;
-        if (read_uint32_sock(conn, sel_ssl, sel_fd, &block_count) != 0) {
-            LOGE("fill_recv_queue: failed to read block count from fd=%d", sel_fd);
-            CLOSE_FAILED_ADDITIONAL_SOCKET();
-        }
 
-        if (block_count == KEEP_ALIVE_MAGIC) {
-            // Keepalive: read size + data, respond
-            uint32_t ka_size = 0;
-            if (read_uint32_sock(conn, sel_ssl, sel_fd, &ka_size) != 0) {
-                CLOSE_FAILED_ADDITIONAL_SOCKET();
+        if (resuming) {
+            block_count = conn->recv_msg_pending_blocks;
+        } else {
+            int bc = read_uint32_sock(conn, sel_ssl, sel_fd, &block_count);
+            if (bc == SE_SSL_READ_TIMEOUT) {
+                // The socket timed out with nothing to read. Treat it as "no data"
+                // instead of a dead link, so a transient stall never tears the
+                // tunnel down (mirrors the reference client's SOCK_LATER handling).
+                LOGT("fill_recv_queue: no data on fd=%d (socket timeout)", sel_fd);
+                return 0;
             }
-            if (ka_size > 512) ka_size = 512;
-            if (ka_size > 0) {
-                uint8_t ka_buf[512];
-                if (data_read_all_sock(conn, sel_ssl, sel_fd, ka_buf, (int)ka_size) != 0) {
-                    CLOSE_FAILED_ADDITIONAL_SOCKET();
+            if (bc != 0) {
+                LOGE("fill_recv_queue: failed to read block count from fd=%d", sel_fd);
+                CLOSE_FAILED_ADDITIONAL_SOCKET("block count read failed");
+            }
+
+            if (block_count == KEEP_ALIVE_MAGIC) {
+                // Keepalive: read size + data, respond
+                uint32_t ka_size = 0;
+                if (read_uint32_sock(conn, sel_ssl, sel_fd, &ka_size) != 0) {
+                    CLOSE_FAILED_ADDITIONAL_SOCKET("keepalive size read failed");
                 }
+                if (ka_size > 512) ka_size = 512;
+                if (ka_size > 0) {
+                    uint8_t ka_buf[512];
+                    if (data_read_all_sock(conn, sel_ssl, sel_fd, ka_buf, (int)ka_size) != 0) {
+                        CLOSE_FAILED_ADDITIONAL_SOCKET("keepalive body read failed");
+                    }
+                }
+                LOGT("fill_recv_queue: keepalive (%u bytes) from fd=%d", ka_size, sel_fd);
+                // Answer on the SAME link the keepalive arrived on. Replying only
+                // over the primary socket leaves the additional link with no
+                // traffic of its own, so the server times it out (s->Timeout) and
+                // drops it — which is why extra links died every ~30-70 s.
+                if (sel_is_additional && sel_add_idx >= 0) {
+                    softether_send_keepalive_sock(conn, sel_ssl, sel_fd);
+                } else {
+                    softether_send_keepalive(conn);
+                }
+                return 0;
             }
-            LOGT("fill_recv_queue: keepalive (%u bytes) from fd=%d", ka_size, sel_fd);
-            softether_send_keepalive(conn);
-            return 0;
-        }
 
-        if (block_count == 0) {
-            return 0; // Empty message
+            if (block_count == 0) {
+                return 0; // Empty message
+            }
         }
 
         LOGT("fill_recv_queue: reading %u block(s) from fd=%d", block_count, sel_fd);
 
-        for (uint32_t i = 0; i < block_count; i++) {
+        // Read the blocks of this message. Stop as soon as the receive queue is
+        // full: remember how many blocks are left plus the socket, and resume on
+        // the next call once the consumer has drained. A server message that
+        // packs more blocks than the queue holds (observed: 128 blocks vs
+        // RECV_QUEUE_SIZE=64) is thus delivered in full instead of discarding
+        // the overflow (the old rx_skipped_blocks path).
+        uint32_t blocks_left = block_count;
+        uint32_t i = 0;
+        while (blocks_left > 0) {
+            if (conn->recv_queue_count >= RECV_QUEUE_SIZE) {
+                conn->recv_msg_pending_blocks = blocks_left;
+                conn->recv_msg_ssl = sel_ssl;
+                conn->recv_msg_fd = sel_fd;
+                conn->recv_msg_is_additional = sel_is_additional;
+                conn->recv_msg_slot = sel_add_idx;
+                // Blocks already queued in this call are real traffic; charge
+                // them before pausing so the per-link split stays accurate.
+                if (rx_bytes_here > 0) conn->link_rx_bytes[link_index] += rx_bytes_here;
+                LOGD("fill_recv_queue: queue full, pausing message with %u block(s) left (fd=%d)",
+                     blocks_left, sel_fd);
+                return 1;
+            }
+
             uint32_t block_size = 0;
-            if (read_uint32_sock(conn, sel_ssl, sel_fd, &block_size) != 0) {
+            int bs_rc = read_uint32_sock(conn, sel_ssl, sel_fd, &block_size);
+            if (bs_rc == SE_SSL_READ_TIMEOUT) {
+                // The rest of this message has not arrived yet (socket timeout,
+                // not a failure). Keep the resume state and report "no data" so
+                // the caller retries instead of tearing the link down.
+                conn->recv_msg_pending_blocks = blocks_left;
+                conn->recv_msg_ssl = sel_ssl;
+                conn->recv_msg_fd = sel_fd;
+                conn->recv_msg_is_additional = sel_is_additional;
+                conn->recv_msg_slot = sel_add_idx;
+                if (rx_bytes_here > 0) conn->link_rx_bytes[link_index] += rx_bytes_here;
+                LOGT("fill_recv_queue: partial message, %u block(s) still pending (fd=%d)",
+                     blocks_left, sel_fd);
+                return 0;
+            }
+            if (bs_rc != 0) {
                 LOGE("fill_recv_queue: failed to read block %u size from fd=%d", i, sel_fd);
-                CLOSE_FAILED_ADDITIONAL_SOCKET();
+                CLOSE_FAILED_ADDITIONAL_SOCKET("block size read failed");
             }
 
             if (block_size > MAX_BLOCK_SIZE) {
                 LOGE("fill_recv_queue: block %u too large: %u", i, block_size);
+                char _why[64];
+                snprintf(_why, sizeof(_why), "fd=%d block too large: %u", sel_fd, block_size);
+                record_link_error(conn, sel_is_additional ? sel_add_idx : -1, _why);
                 return -1;
             }
 
-            if (block_size == 0) continue;
+            if (block_size == 0) {
+                goto block_done;
+            }
 
-            if (block_size <= MAX_QUEUED_FRAME && conn->recv_queue_count < RECV_QUEUE_SIZE) {
+            if (block_size <= MAX_QUEUED_FRAME) {
                 queued_frame_t* entry = &conn->recv_queue[conn->recv_queue_tail];
 
                 if (!conn->server_use_compress) {
@@ -1215,12 +1464,12 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
                     // queue slot. One copy total (SSL -> slot).
                     if (data_read_all_sock(conn, sel_ssl, sel_fd, entry->data, (int)block_size) != 0) {
                         LOGE("fill_recv_queue: failed to read block %u from fd=%d", i, sel_fd);
-                        CLOSE_FAILED_ADDITIONAL_SOCKET();
+                        CLOSE_FAILED_ADDITIONAL_SOCKET("block read failed");
                     }
                     entry->len = block_size;
                     conn->recv_queue_tail = (conn->recv_queue_tail + 1) % RECV_QUEUE_SIZE;
                     conn->recv_queue_count++;
-                    continue;
+                    goto block_done;
                 }
 
                 // Compressed session: read into temp buffer to check for
@@ -1233,7 +1482,7 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
                 if (data_read_all_sock(conn, sel_ssl, sel_fd, tmp_block, (int)block_size) != 0) {
                     LOGE("fill_recv_queue: failed to read block %u from fd=%d", i, sel_fd);
                     free(tmp_block);
-                    CLOSE_FAILED_ADDITIONAL_SOCKET();
+                    CLOSE_FAILED_ADDITIONAL_SOCKET("block read failed (compressed)");
                 }
 
                 int compressed_ok = 0;
@@ -1247,7 +1496,7 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
                     conn->recv_queue_tail = (conn->recv_queue_tail + 1) % RECV_QUEUE_SIZE;
                     conn->recv_queue_count++;
                     compressed_ok = 1;
-                    continue;
+                    goto block_done;
                 }
                 // Fallback: check for CONNECTION_BULK_COMPRESS_SIGNATURE
                 if (block_size > 8) {
@@ -1266,7 +1515,7 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
                             conn->recv_queue_tail = (conn->recv_queue_tail + 1) % RECV_QUEUE_SIZE;
                             conn->recv_queue_count++;
                             compressed_ok = 1;
-                            continue;
+                            goto block_done;
                         }
                     }
                 }
@@ -1280,21 +1529,39 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
                     conn->recv_queue_count++;
                 }
             } else {
-                // Queue full or frame too large — skip this block
+                // Frame larger than a queue slot — cannot be delivered at all.
+                // Rare (MAX_QUEUED_FRAME is 2048); counted separately from the
+                // queue-full case so the two are distinguishable in the log.
                 uint8_t skip_buf[2048];
-                uint32_t remaining = block_size;
-                while (remaining > 0) {
-                    uint32_t chunk = remaining > sizeof(skip_buf) ? sizeof(skip_buf) : remaining;
+                uint32_t skip_left = block_size;
+                while (skip_left > 0) {
+                    uint32_t chunk = skip_left > sizeof(skip_buf) ? sizeof(skip_buf) : skip_left;
                     if (data_read_all_sock(conn, sel_ssl, sel_fd, skip_buf, (int)chunk) != 0) {
-                        CLOSE_FAILED_ADDITIONAL_SOCKET();
+                        CLOSE_FAILED_ADDITIONAL_SOCKET("oversized block read failed");
                     }
-                    remaining -= chunk;
+                    skip_left -= chunk;
                 }
                 conn->rx_skipped_blocks++;
-                LOGD("fill_recv_queue: skipped block %u (%u bytes), total skipped=%u",
+                LOGD("fill_recv_queue: skipped oversized block %u (%u bytes), total skipped=%u",
                      i, block_size, conn->rx_skipped_blocks);
             }
+
+        block_done:
+            // Charge successfully queued blocks to the link they arrived on.
+            // block_size is 0 for empty blocks and > MAX_QUEUED_FRAME for the
+            // skipped-oversized path, so neither is counted here.
+            if (block_size > 0 && block_size <= MAX_QUEUED_FRAME) {
+                rx_bytes_here += block_size;
+            }
+            blocks_left--;
+            i++;
         }
+
+        // Message fully consumed — clear any resume state.
+        conn->recv_msg_pending_blocks = 0;
+        conn->recv_msg_ssl = NULL;
+        conn->recv_msg_fd = -1;
+        if (rx_bytes_here > 0) conn->link_rx_bytes[link_index] += rx_bytes_here;
     }
 
     #undef CLOSE_FAILED_ADDITIONAL_SOCKET

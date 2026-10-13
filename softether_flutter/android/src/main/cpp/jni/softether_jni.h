@@ -55,11 +55,11 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
     JNIEnv *env, jobject thiz, jlong handle, jint maxConnections, jint intervalMs,
     jboolean useEncrypt, jboolean useCompress, jboolean qos);
 
-// Installs (or clears, with null) the socket-protect callback: the native
-// connect path calls SocketProtector.protect(fd) on each new socket before
-// connecting it, so Android can exclude it from the VPN tunnel.
-JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetProtectCallback(
-    JNIEnv *env, jobject thiz, jlong handle, jobject protector);
+// Installs (or clears, with null) the socket-protect hook: the native connect
+// path calls VpnService.protect(fd) on each new socket before connecting it, so
+// Android can exclude it from the VPN tunnel. Returns true when installed.
+JNIEXPORT jboolean JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSetProtectCallback(
+    JNIEnv *env, jobject thiz, jlong handle, jobject vpnService);
 
 JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetNumConnections(
     JNIEnv *env, jobject thiz, jlong handle);
@@ -67,6 +67,20 @@ JNIEXPORT jint JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGe
 // Diagnostic snapshot of the negotiated session (connection count, server
 // limits, data-channel TLS, accepted encryption/compression flags).
 JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetSessionInfo(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// Human-readable specifics of the last finished additional-connect attempt
+// (target address, errno, OpenSSL reason, HTTP status, local socket address).
+JNIEXPORT jstring JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetSessionDetail(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// Per-link traffic split: long[2*(MAX_SE_CONNECTIONS+1)], tx bytes first then
+// rx bytes (index 0 = primary, i+1 = additional slot i).
+JNIEXPORT jlongArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetLinkStats(
+    JNIEnv *env, jobject thiz, jlong handle);
+
+// Reason the last data-link read failed, or null when no link has failed.
+JNIEXPORT jstring JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetLastLinkError(
     JNIEnv *env, jobject thiz, jlong handle);
 
 JNIEXPORT jintArray JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeGetAllSocketFds(

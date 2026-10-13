@@ -71,7 +71,8 @@ class SstpFlutter {
         } else if (arg["status"] == SSTPConnectionStatusKeys.RECONNECTING) {
           _stopConnectedTimer();
           _assignedIp = "";
-          onReconnectingResult?.call((arg["message"] as String?) ?? "Reconnecting...");
+          onReconnectingResult
+              ?.call((arg["message"] as String?) ?? "Reconnecting...");
         } else if (arg["status"] == SSTPConnectionStatusKeys.DISCONNECTED) {
           _stopConnectedTimer();
           _assignedIp = "";
@@ -322,7 +323,6 @@ class SstpFlutter {
     }
   }
 
-
   /// Opens files and then returns selected directory path
   ///
   /// WARNING : it's available only on Android
@@ -339,6 +339,18 @@ class SstpFlutter {
       await channelHandler.setConnectionLogging(enabled: enabled);
     } catch (e) {
       rethrow;
+    }
+  }
+
+  /// Writes a lifecycle marker (protocol switch, teardown, …) into the shared
+  /// connection log. No-op when logging is disabled or on unsupported platforms.
+  ///
+  /// WARNING : it's available only on Android
+  Future<void> logMessage({String tag = 'APP', required String message}) async {
+    try {
+      await channelHandler.logMessage(tag: tag, message: message);
+    } catch (_) {
+      // Logging must never break the connection flow.
     }
   }
 

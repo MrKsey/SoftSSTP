@@ -5,6 +5,7 @@
 #include "rudp_transport.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 #include <android/log.h>
@@ -15,6 +16,7 @@
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <sys/time.h>
 
 #define TAG "SoftEtherProtocol"
@@ -43,6 +45,14 @@ static rudp_transport_t* take_nat_t_transport(softether_connection_t* conn) {
     return __sync_bool_compare_and_swap((void**)&conn->nat_t_transport, p, NULL)
         ? (rudp_transport_t*)p : NULL;
 }
+
+// Format a connected socket's local end as "ip:port" (empty string on error).
+static void addl_format_local_addr(int fd, char* out, size_t out_size);
+
+// Record why the current additional-connect attempt failed (or that it worked).
+// Read back through softether_get_session_info() and printed by the app log, so
+// a failed multi-connection setup is diagnosable from the device log alone.
+static void addl_set_detail(softether_connection_t* conn, const char* fmt, ...);
 
 // Same ownership-claim pattern for the RUDP context.
 static rudp_context_t* take_rudp_ctx(softether_connection_t* conn) {
@@ -1001,14 +1011,25 @@ softether_connection_t* softether_create(void) {
     conn->half_connection = 0;
     conn->protect_fn = NULL;
     conn->protect_userdata = NULL;
+    conn->additional_last_protect = 0;
+    conn->primary_local_ip[0] = '\0';
+    conn->primary_local_port = 0;
     conn->primary_direction = TCP_DIRECTION_BOTH;
     conn->additional_connect_interval_ms = ADDITIONAL_CONNECT_INTERVAL_MS;
+    conn->additional_retry_delay_ms = 0;
     conn->next_connect_time = 0;
     conn->additional_failed_count = 0;
     memset(conn->additional, 0, sizeof(conn->additional));
     conn->additional_connecting = 0;
     conn->additional_connect_slot = -1;
     conn->additional_connect_result = -1;
+
+    // Phase 21: no in-flight multi-block message yet.
+    conn->recv_msg_pending_blocks = 0;
+    conn->recv_msg_ssl = NULL;
+    conn->recv_msg_fd = -1;
+    conn->recv_msg_is_additional = 0;
+    conn->recv_msg_slot = -1;
 
     // Data channel starts encrypted; softether_connect_with_hub replaces this
     // with the server-negotiated use_encrypt value once the Welcome PACK arrives.
@@ -2464,6 +2485,25 @@ int softether_connect_with_hub(softether_connection_t* conn, const char* host, i
                 conn->socket_fd = sock->fd;
                 sock->fd = -1;
 
+                // Remember the primary socket's local address: the additional
+                // links must leave from the same source address (the reference
+                // client binds them to it explicitly), so a failure log can
+                // compare the two ends side by side.
+                {
+                    char local_addr[64];
+                    addl_format_local_addr(conn->socket_fd, local_addr, sizeof(local_addr));
+                    char* colon = strrchr(local_addr, ':');
+                    if (colon != NULL) {
+                        *colon = '\0';
+                        snprintf(conn->primary_local_ip, sizeof(conn->primary_local_ip),
+                                 "%s", local_addr);
+                        conn->primary_local_port = atoi(colon + 1);
+                    }
+                    LOGD("Primary TCP local address %s:%d", conn->primary_local_ip,
+                         conn->primary_local_port);
+                }
+
+
                 // Sync server bookkeeping to the actually-connected address
                 if (sock->addr_len > 0) {
                     char actual_ip[64] = "";
@@ -3011,7 +3051,24 @@ static void softether_maintain_links(softether_connection_t* conn) {
                     conn->additional_connect_slot = -1;
                 }
             }
-            conn->next_connect_time = now + conn->additional_connect_interval_ms;
+
+            // Exponential backoff between attempts. The first attempt after a
+            // fresh/successful state uses the configured interval; every failed
+            // attempt doubles the wait up to SE_ADDL_RETRY_DELAY_MAX_MS, so a
+            // server that refuses extra links is not hammered once per second.
+            // additional_failed_count is reset to 0 on success (see
+            // softether_additional_connect), which restores the fast interval.
+            uint32_t base = conn->additional_connect_interval_ms;
+            if (base < 1000) base = 1000;
+            uint32_t delay = base;
+            if (conn->additional_failed_count > 0) {
+                delay = conn->additional_retry_delay_ms;
+                if (delay < base) delay = base;
+                uint32_t next = delay * 2;
+                if (next > SE_ADDL_RETRY_DELAY_MAX_MS) next = SE_ADDL_RETRY_DELAY_MAX_MS;
+                conn->additional_retry_delay_ms = next;
+            }
+            conn->next_connect_time = now + delay;
         }
     }
 
@@ -3455,7 +3512,9 @@ int softether_receive_data(softether_connection_t* conn, uint8_t* buffer, uint32
         uint32_t payload_len = 0;
         int result = softether_receive_packet(conn, command, buffer, &payload_len, max_len);
 
-        if (result < 0) {
+        if (result <= 0) {
+            // Nothing to read: socket timeout (0) or a real error (< 0). Either
+            // way there is no packet to hand back, and `command` was not set.
             LOGT("No data available from server (timeout or error)");
             *received_len = 0;
             *command = 0;
@@ -3541,6 +3600,13 @@ static void* additional_connect_thread_routine(void* arg) {
     uint64_t attempt_start = softether_tick_ms();
     int result = softether_additional_connect(conn);
     conn->additional_last_attempt_ms = (int)(softether_tick_ms() - attempt_start);
+    // Freeze the stage the attempt died at. `additional_last_stage` is
+    // overwritten the moment the next attempt starts, so reading it while the
+    // retry loop is running reports the in-flight attempt instead of the
+    // failure. Captured here, nothing can run in between.
+    if (result != 0) {
+        conn->additional_last_fail_stage = conn->additional_last_stage;
+    }
     conn->additional_connect_result = result;
     conn->additional_connecting = 0;
     LOGD("Background additional connect thread finished (slot=%d result=%d)", slot, result);
@@ -3553,6 +3619,47 @@ void softether_additional_thread_wait(softether_connection_t* conn) {
     if (conn == NULL || !conn->additional_connecting) return;
     pthread_join(conn->additional_thread, NULL);
     conn->additional_connecting = 0;
+}
+
+// Format a connected socket's local end as "ip:port" (empty string on error).
+static void addl_format_local_addr(int fd, char* out, size_t out_size) {
+    out[0] = '\0';
+    if (fd < 0) return;
+
+    struct sockaddr_storage ss;
+    socklen_t slen = sizeof(ss);
+    if (getsockname(fd, (struct sockaddr*)&ss, &slen) != 0) return;
+
+    char ip[INET6_ADDRSTRLEN] = "";
+    int port = 0;
+    if (ss.ss_family == AF_INET) {
+        inet_ntop(AF_INET, &((struct sockaddr_in*)&ss)->sin_addr, ip, sizeof(ip));
+        port = (int)ntohs(((struct sockaddr_in*)&ss)->sin_port);
+    } else if (ss.ss_family == AF_INET6) {
+        inet_ntop(AF_INET6, &((struct sockaddr_in6*)&ss)->sin6_addr, ip, sizeof(ip));
+        port = (int)ntohs(((struct sockaddr_in6*)&ss)->sin6_port);
+    } else {
+        return;
+    }
+    snprintf(out, out_size, "%s:%d", ip, port);
+}
+
+// Human-readable form of softether_socket_t::protect_result for the log.
+static const char* addl_protect_state_str(int state) {
+    if (state > 0) return "ok";
+    if (state < 0) return "FAILED";
+    return "off";
+}
+
+// Record why the current additional-connect attempt failed (or that it worked).
+// Read back through softether_get_session_info() and printed by the app log, so
+// a failed multi-connection setup is diagnosable from the device log alone.
+static void addl_set_detail(softether_connection_t* conn, const char* fmt, ...) {
+    if (conn == NULL) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(conn->additional_last_detail, sizeof(conn->additional_last_detail), fmt, ap);
+    va_end(ap);
 }
 
 // Open an additional TCP connection to the server (ClientAdditionalConnect).
@@ -3579,6 +3686,7 @@ int softether_additional_connect(softether_connection_t* conn) {
     if (slot < 0) {
         LOGD("additional_connect: no free slot (num_additional=%d)", conn->num_additional);
         conn->additional_last_stage = SE_ADDL_STAGE_NO_SLOT;
+        addl_set_detail(conn, "no free slot (num=%d)", conn->num_additional);
         return -1;
     }
 
@@ -3595,6 +3703,7 @@ int softether_additional_connect(softether_connection_t* conn) {
     softether_socket_t* sock = socket_create(SOCKET_TYPE_TCP);
     if (sock == NULL) {
         LOGE("additional_connect: failed to create socket");
+        addl_set_detail(conn, "tcp socket_create failed");
         conn->additional_failed_count++;
         return -1;
     }
@@ -3606,8 +3715,22 @@ int softether_additional_connect(softether_connection_t* conn) {
     sock->protect_fn = conn->protect_fn;
     sock->protect_userdata = conn->protect_userdata;
 
-    if (socket_connect_timeout(sock, conn->server_ip, conn->server_port, conn->timeout_ms) != 0) {
+    errno = 0;
+    int connect_rc = socket_connect_timeout(sock, conn->server_ip, conn->server_port,
+                                            SE_ADDL_CONNECT_TIMEOUT_MS);
+    // Captured before the socket is destroyed: a socket that stayed inside the
+    // tunnel still connects and completes the TLS handshake, so this flag is the
+    // only way to tell such a link apart from a real one.
+    int protect_state = sock->protect_result;
+    conn->additional_last_protect = protect_state;
+
+    if (connect_rc != 0) {
+        int ce = errno;
         LOGE("additional_connect: TCP connect failed");
+        addl_set_detail(conn, "tcp %s:%d errno=%d %s protect=%s primary_local=%s",
+                        conn->server_ip, conn->server_port, ce, strerror(ce),
+                        addl_protect_state_str(protect_state),
+                        conn->primary_local_ip[0] ? conn->primary_local_ip : "?");
         socket_destroy(sock);
         conn->additional_failed_count++;
         return -1;
@@ -3617,11 +3740,16 @@ int softether_additional_connect(softether_connection_t* conn) {
     sock->fd = -1;
     socket_destroy(sock);
 
+    char addl_local[64];
+    addl_format_local_addr(fd, addl_local, sizeof(addl_local));
+
     // Step 2: TLS handshake
     conn->additional_last_stage = SE_ADDL_STAGE_TLS;
     ssl_context_t* ssl_ctx = ssl_create_client();
     if (ssl_ctx == NULL) {
         LOGE("additional_connect: failed to create SSL context");
+        addl_set_detail(conn, "tls ssl_create_client failed local=%s protect=%s",
+                        addl_local, addl_protect_state_str(protect_state));
         close(fd);
         conn->additional_failed_count++;
         return -1;
@@ -3635,6 +3763,10 @@ int softether_additional_connect(softether_connection_t* conn) {
                                ? conn->server_host_name : conn->server_ip;
     if (ssl_connect(ssl_ctx, fd, sni_host) != 0) {
         LOGE("additional_connect: TLS handshake failed (SNI %s)", sni_host);
+        addl_set_detail(conn, "tls sni=%s local=%s protect=%s primary_local=%s %s",
+                        sni_host, addl_local, addl_protect_state_str(protect_state),
+                        conn->primary_local_ip[0] ? conn->primary_local_ip : "?",
+                        ssl_last_error());
         ssl_destroy(ssl_ctx);
         close(fd);
         conn->additional_failed_count++;
@@ -3645,8 +3777,12 @@ int softether_additional_connect(softether_connection_t* conn) {
     int nodelay = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
-    // Set data timeout
-    int data_timeout_ms = 5000;
+    // Set data timeout. Generous on purpose: some servers (VPN Gate relays in
+    // particular) take well over 5 s to answer the additional_connect PACK on a
+    // fresh TLS link, and the old 5 s bound produced a stream of
+    // "failed reading auth response" retries. The reference client's session
+    // timeout is ~30 s; 15 s keeps the attempt bounded without giving up early.
+    int data_timeout_ms = 15000;
     struct timeval tv;
     tv.tv_sec = data_timeout_ms / 1000;
     tv.tv_usec = (data_timeout_ms % 1000) * 1000;
@@ -3656,6 +3792,12 @@ int softether_additional_connect(softether_connection_t* conn) {
 
     // Step 3: Send SoftEther signature (VPNCONNECT watermark)
     conn->additional_last_stage = SE_ADDL_STAGE_WATERMARK;
+    // Same Host value the primary connection uses: the configured server name
+    // when there is one, otherwise the resolved address. The primary path sends
+    // the name (send_vpnconnect_watermark(conn, host)), so a server fronted by a
+    // name-routed proxy must not see a bare IP on the extra links.
+    const char* host_hdr = (conn->server_host_name[0] != '\0')
+                               ? conn->server_host_name : conn->server_ip;
     {
         const char* watermark = "VPNCONNECT";
         size_t watermark_len = strlen(watermark);
@@ -3668,11 +3810,12 @@ int softether_additional_connect(softether_connection_t* conn) {
             "Connection: Keep-Alive\r\n"
             "Content-Length: %zu\r\n"
             "\r\n",
-            conn->server_ip, watermark_len);
+            host_hdr, watermark_len);
 
         size_t combined_len = (size_t)post_len + watermark_len;
         uint8_t* combined = (uint8_t*)malloc(combined_len);
         if (combined == NULL) {
+            addl_set_detail(conn, "watermark alloc failed local=%s", addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3687,6 +3830,7 @@ int softether_additional_connect(softether_connection_t* conn) {
 
         if (write_ret <= 0) {
             LOGE("additional_connect: failed to send VPNCONNECT watermark");
+            addl_set_detail(conn, "watermark write=%d local=%s", write_ret, addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3704,6 +3848,7 @@ int softether_additional_connect(softether_connection_t* conn) {
             int r = ssl_read(ssl_ctx, resp + hdr_len, 1);
             if (r <= 0) {
                 LOGE("additional_connect: failed reading connect.cgi response");
+                addl_set_detail(conn, "watermark read=%d hdr=%d local=%s", r, hdr_len, addl_local);
                 ssl_shutdown(ssl_ctx);
                 ssl_destroy(ssl_ctx);
                 close(fd);
@@ -3719,6 +3864,7 @@ int softether_additional_connect(softether_connection_t* conn) {
         }
         if (!found_end) {
             LOGE("additional_connect: connect.cgi response headers too large");
+            addl_set_detail(conn, "watermark headers too large local=%s", addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3740,6 +3886,8 @@ int softether_additional_connect(softether_connection_t* conn) {
                                  (int)(content_length - body_read));
                 if (r <= 0) {
                     LOGE("additional_connect: failed reading connect.cgi body");
+                    addl_set_detail(conn, "watermark body read=%d %u/%u local=%s",
+                                    r, body_read, content_length, addl_local);
                     ssl_shutdown(ssl_ctx);
                     ssl_destroy(ssl_ctx);
                     close(fd);
@@ -3756,12 +3904,23 @@ int softether_additional_connect(softether_connection_t* conn) {
     // Step 4: Send "additional_connect" method with session_key
     conn->additional_last_stage = SE_ADDL_STAGE_AUTH;
     {
+        // Same element set as the reference client's PackAdditionalConnect():
+        // method + session_key plus the client version triplet it adds through
+        // PackAddClientVersion() (Protocol.c:5397-5419).
+        const char* addl_client_str = "SoftEther VPN Client";
+        const uint32_t addl_client_ver = 420;
+        const uint32_t addl_client_build = 9699;
+
         uint32_t pack_size = 4;  // num_elements (uint32)
         pack_size += PACK_STR_SZ("method", "additional_connect");
         pack_size += PACK_DATA_SZ("session_key", SHA1_SIZE);
+        pack_size += PACK_STR_SZ("client_str", addl_client_str);
+        pack_size += PACK_INT_SZ("client_ver");
+        pack_size += PACK_INT_SZ("client_build");
 
         uint8_t* pack_buf = (uint8_t*)calloc(1, pack_size + 64);
         if (pack_buf == NULL) {
+            addl_set_detail(conn, "auth pack alloc failed local=%s", addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3770,9 +3929,12 @@ int softether_additional_connect(softether_connection_t* conn) {
         }
 
         uint8_t* pp = pack_buf;
-        pack_write_uint32(&pp, 2);  // num_elements = 2
+        pack_write_uint32(&pp, 5);  // num_elements = 5
         pack_add_str(&pp, "method", "additional_connect");
         pack_add_data(&pp, "session_key", conn->session_key, SHA1_SIZE);
+        pack_add_str(&pp, "client_str", addl_client_str);
+        pack_add_int(&pp, "client_ver", addl_client_ver);
+        pack_add_int(&pp, "client_build", addl_client_build);
 
         uint32_t actual_len = (uint32_t)(pp - pack_buf);
 
@@ -3793,12 +3955,13 @@ int softether_additional_connect(softether_connection_t* conn) {
             "Content-Type: application/octet-stream\r\n"
             "Content-Length: %u\r\n"
             "\r\n",
-            date_str, conn->server_ip, actual_len);
+            date_str, host_hdr, actual_len);
 
         size_t auth_combined_len = (size_t)auth_hdr_len + actual_len;
         uint8_t* auth_combined = (uint8_t*)malloc(auth_combined_len);
         if (auth_combined == NULL) {
             free(pack_buf);
+            addl_set_detail(conn, "auth hdr alloc failed local=%s", addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3814,6 +3977,7 @@ int softether_additional_connect(softether_connection_t* conn) {
 
         if (write_ret <= 0) {
             LOGE("additional_connect: failed to send additional_connect PACK");
+            addl_set_detail(conn, "auth write=%d local=%s", write_ret, addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3822,16 +3986,24 @@ int softether_additional_connect(softether_connection_t* conn) {
         }
     }
 
-    // Read the additional_connect response
+    // Read the additional_connect response. Mirrors the reference client's
+    // HttpClientRecv() (Protocol.c:1202-1279): the reply must be an HTTP/1.x
+    // 200 whose body is a PACK carrying error=0. Anything else (error page,
+    // proxy rejection, truncated body, non-PACK payload) fails the attempt.
+    // A reply that cannot be fully validated must NEVER be counted as a live
+    // link — that is what made the app report more TCP connections than the
+    // server actually had, and it made the client send data into a link the
+    // server had already refused.
     conn->additional_last_stage = SE_ADDL_STAGE_AUTH_RESP;
     {
-        uint8_t auth_resp[4096];
+        uint8_t auth_resp[8192];
         int hdr_len = 0;
         int found_end = 0;
         while (hdr_len < (int)sizeof(auth_resp) - 1 && !found_end) {
             int r = ssl_read(ssl_ctx, auth_resp + hdr_len, 1);
             if (r <= 0) {
                 LOGE("additional_connect: failed reading auth response");
+                addl_set_detail(conn, "auth-resp read=%d hdr=%d local=%s", r, hdr_len, addl_local);
                 ssl_shutdown(ssl_ctx);
                 ssl_destroy(ssl_ctx);
                 close(fd);
@@ -3847,6 +4019,7 @@ int softether_additional_connect(softether_connection_t* conn) {
         }
         if (!found_end) {
             LOGE("additional_connect: auth response headers too large");
+            addl_set_detail(conn, "auth-resp headers too large local=%s", addl_local);
             ssl_shutdown(ssl_ctx);
             ssl_destroy(ssl_ctx);
             close(fd);
@@ -3855,6 +4028,27 @@ int softether_additional_connect(softether_connection_t* conn) {
         }
         auth_resp[hdr_len] = '\0';
 
+        // 1. Status line must be "HTTP/1.x 200 ...". Checked character by
+        // character so a garbage (non-HTTP) reply can never be mistaken for a
+        // success. Layout: "HTTP/1." (0-6), version digit (7), space (8),
+        // status code (9-11).
+        int http_ok = (strncmp((char*)auth_resp, "HTTP/1.", 7) == 0 &&
+                       (auth_resp[7] == '0' || auth_resp[7] == '1') &&
+                       auth_resp[8] == ' ' &&
+                       auth_resp[9] == '2' && auth_resp[10] == '0' && auth_resp[11] == '0');
+        if (!http_ok) {
+            LOGE("additional_connect: bad HTTP status line in auth response");
+            addl_set_detail(conn, "auth-resp status='%.40s' local=%s",
+                            (char*)auth_resp, addl_local);
+            conn->additional_last_stage = SE_ADDL_STAGE_HTTP_ERR;
+            conn->additional_last_error = -1;
+            ssl_shutdown(ssl_ctx);
+            ssl_destroy(ssl_ctx);
+            close(fd);
+            conn->additional_failed_count++;
+            return -1;
+        }
+
         uint32_t content_length = 0;
         const char* cl_str = strstr((char*)auth_resp, "Content-Length: ");
         if (!cl_str) cl_str = strstr((char*)auth_resp, "content-length: ");
@@ -3862,15 +4056,33 @@ int softether_additional_connect(softether_connection_t* conn) {
             content_length = (uint32_t)atoi(cl_str + 16);
         }
 
+        // 2. A PACK body is mandatory: error pages and empty replies have no
+        // usable Content-Length.
+        if (content_length == 0 ||
+            hdr_len + (int)content_length >= (int)sizeof(auth_resp)) {
+            LOGE("additional_connect: auth response has no usable PACK body (len=%u)",
+                 content_length);
+            addl_set_detail(conn, "auth-resp body len=%u local=%s", content_length, addl_local);
+            conn->additional_last_stage = SE_ADDL_STAGE_BAD_BODY;
+            conn->additional_last_error = -1;
+            ssl_shutdown(ssl_ctx);
+            ssl_destroy(ssl_ctx);
+            close(fd);
+            conn->additional_failed_count++;
+            return -1;
+        }
+
         int body_off = hdr_len;
         int body_ln = 0;
-        if (content_length > 0 && hdr_len + (int)content_length < (int)sizeof(auth_resp)) {
+        {
             uint32_t body_read = 0;
             while (body_read < content_length) {
                 int r = ssl_read(ssl_ctx, auth_resp + hdr_len + body_read,
                                  (int)(content_length - body_read));
                 if (r <= 0) {
                     LOGE("additional_connect: failed reading auth body");
+                    addl_set_detail(conn, "auth-resp body read=%d %u/%u local=%s",
+                                    r, body_read, content_length, addl_local);
                     ssl_shutdown(ssl_ctx);
                     ssl_destroy(ssl_ctx);
                     close(fd);
@@ -3882,23 +4094,36 @@ int softether_additional_connect(softether_connection_t* conn) {
             body_ln = (int)content_length;
         }
 
+        // 3. The body must be a PACK whose "error" element is present and zero.
+        // pack_get_int() bounds-checks every read, so a non-PACK body simply
+        // fails to parse instead of being read out of bounds.
         uint32_t err_val = 0;
-        if (body_ln >= 4) {
-            if (pack_get_int(auth_resp + body_off, (uint32_t)body_ln, "error", &err_val) == 0) {
-                if (err_val != 0) {
-                    LOGE("additional_connect: server returned error %u", err_val);
-                    conn->additional_last_stage = SE_ADDL_STAGE_SERVER_ERR;
-                    conn->additional_last_error = (int)err_val;
-                    ssl_shutdown(ssl_ctx);
-                    ssl_destroy(ssl_ctx);
-                    close(fd);
-                    conn->additional_failed_count++;
-                    return -1;
-                }
-            }
-            // Parse direction from server response (used in half-connection mode)
-            pack_get_int(auth_resp + body_off, (uint32_t)body_ln, "direction", &server_direction);
+        if (pack_get_int(auth_resp + body_off, (uint32_t)body_ln, "error", &err_val) != 0) {
+            LOGE("additional_connect: auth body is not a valid PACK");
+            addl_set_detail(conn, "auth-resp not a PACK (%d bytes) local=%s",
+                            body_ln, addl_local);
+            conn->additional_last_stage = SE_ADDL_STAGE_BAD_BODY;
+            conn->additional_last_error = -1;
+            ssl_shutdown(ssl_ctx);
+            ssl_destroy(ssl_ctx);
+            close(fd);
+            conn->additional_failed_count++;
+            return -1;
         }
+        if (err_val != 0) {
+            LOGE("additional_connect: server returned error %u", err_val);
+            addl_set_detail(conn, "auth-resp server error=%u local=%s", err_val, addl_local);
+            conn->additional_last_stage = SE_ADDL_STAGE_SERVER_ERR;
+            conn->additional_last_error = (int)err_val;
+            ssl_shutdown(ssl_ctx);
+            ssl_destroy(ssl_ctx);
+            close(fd);
+            conn->additional_failed_count++;
+            return -1;
+        }
+
+        // Parse direction from the server response (used in half-connection mode)
+        pack_get_int(auth_resp + body_off, (uint32_t)body_ln, "direction", &server_direction);
 
         LOGD("additional_connect: auth response parsed (error=%u, direction=%u)", err_val, server_direction);
     }
@@ -3920,27 +4145,39 @@ int softether_additional_connect(softether_connection_t* conn) {
     LOGD("additional_connect: SUCCESS slot=%d fd=%d direction=%u num_additional=%d",
          slot, fd, server_direction, conn->num_additional);
 
+    addl_set_detail(conn, "ok slot=%d local=%s direction=%u num=%d",
+                    slot, addl_local, server_direction, conn->num_additional);
     conn->additional_last_stage = SE_ADDL_STAGE_NONE;
     conn->additional_last_error = 0;
     conn->additional_failed_count = 0;
     return 0;
 }
 
-// Select the next TCP socket for sending using round-robin.
+// Select the TCP socket for the next data block.
 // Returns the socket index: 0 = primary, 1..N = additional.
-// In half-connection mode, only selects sockets whose direction allows sending
-// (client mode: TCP_DIRECTION_BOTH or TCP_DIRECTION_CLIENT_TO_SERVER).
+// Only sockets whose direction allows sending are considered (client mode:
+// TCP_DIRECTION_BOTH or TCP_DIRECTION_CLIENT_TO_SERVER).
+//
+// The link is chosen by health, not blindly round-robin: the reference client's
+// ConnectionSend() picks the TCPSOCK with the smallest LateCount, i.e. the link
+// that most recently delivered data (Connection.c:1022-1104, 1370-1396). A
+// blind round-robin keeps handing blocks to a link the server has already
+// stopped using, which is exactly how a "connected" session turns into a dead
+// data path. Round-robin survives only as the tie-break, so two equally fresh
+// links still share the load.
 int softether_select_send_socket(softether_connection_t* conn) {
     if (conn == NULL) return 0;
 
-    // Collect all send-capable socket indices
+    // Collect all send-capable socket indices with their lag counters
     int candidates[MAX_SE_CONNECTIONS + 1];
+    uint32_t lateness[MAX_SE_CONNECTIONS + 1];
     int count = 0;
 
     // Primary socket: send-capable if direction is BOTH or C2S
     if (conn->socket_fd >= 0 && conn->ssl != NULL) {
         int pd = conn->primary_direction;
         if (pd == TCP_DIRECTION_BOTH || pd == TCP_DIRECTION_CLIENT_TO_SERVER) {
+            lateness[count] = conn->primary_late_count;
             candidates[count++] = 0;
         }
     }
@@ -3951,14 +4188,26 @@ int softether_select_send_socket(softether_connection_t* conn) {
         if (!ts->active) continue;
         int d = ts->direction;
         if (d != TCP_DIRECTION_BOTH && d != TCP_DIRECTION_CLIENT_TO_SERVER) continue;
+        lateness[count] = ts->late_count;
         candidates[count++] = i + 1;  // +1 because index 0 = primary
     }
 
     if (count == 0) return 0;  // fallback to primary
 
-    int idx = conn->send_rr_idx % count;
-    conn->send_rr_idx = (conn->send_rr_idx + 1) % count;
-    return candidates[idx];
+    uint32_t best = lateness[0];
+    for (int i = 1; i < count; i++) {
+        if (lateness[i] < best) best = lateness[i];
+    }
+
+    int start = conn->send_rr_idx % count;
+    for (int k = 0; k < count; k++) {
+        int i = (start + k) % count;
+        if (lateness[i] == best) {
+            conn->send_rr_idx = (i + 1) % count;
+            return candidates[i];
+        }
+    }
+    return candidates[0];
 }
 
 // Get the total number of active connections (primary + additional)
@@ -4065,6 +4314,35 @@ void softether_get_session_info(softether_connection_t* conn,
     out->additional_last_stage = conn->additional_last_stage;
     out->additional_last_error = conn->additional_last_error;
     out->additional_last_attempt_ms = conn->additional_last_attempt_ms;
+    out->additional_last_fail_stage = conn->additional_last_fail_stage;
+    snprintf(out->additional_last_detail, sizeof(out->additional_last_detail), "%s",
+             conn->additional_last_detail);
+    snprintf(out->primary_local_ip, sizeof(out->primary_local_ip), "%s",
+             conn->primary_local_ip);
+    out->primary_local_port = conn->primary_local_port;
+    out->protect_available = (conn->protect_fn != NULL) ? 1 : 0;
+    out->additional_last_protect = conn->additional_last_protect;
+}
+
+int softether_get_link_stats(softether_connection_t* conn,
+                             uint64_t* tx_bytes,
+                             uint64_t* rx_bytes,
+                             int max) {
+    if (conn == NULL || tx_bytes == NULL || rx_bytes == NULL || max <= 0) return 0;
+    int n = (max < (MAX_SE_CONNECTIONS + 1)) ? max : (MAX_SE_CONNECTIONS + 1);
+    for (int i = 0; i < n; i++) {
+        tx_bytes[i] = conn->link_tx_bytes[i];
+        rx_bytes[i] = conn->link_rx_bytes[i];
+    }
+    return n;
+}
+
+void softether_get_last_link_error(softether_connection_t* conn,
+                                   char* out, int max) {
+    if (out == NULL || max <= 0) return;
+    out[0] = '\0';
+    if (conn == NULL) return;
+    snprintf(out, (size_t)max, "%s", conn->last_link_error);
 }
 
 // Reconnection support - Attempt to reconnect using stored credentials

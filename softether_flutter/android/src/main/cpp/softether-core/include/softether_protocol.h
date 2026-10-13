@@ -26,6 +26,10 @@ extern "C" {
 #define MAX_SEND_SOCKET_QUEUE_SIZE          (1600 * 1600)
 #define MIN_SEND_SOCKET_QUEUE_SIZE          (1600 * 200)
 #define ADDITIONAL_CONNECT_INTERVAL_MS      1000
+// Upper bound for the exponential backoff between failed additional-connection
+// attempts. Without it a server that keeps refusing extra links is retried once
+// per second forever, which hammers the server and the battery.
+#define SE_ADDL_RETRY_DELAY_MAX_MS          30000
 #define TCP_DIRECTION_BOTH                  0
 #define TCP_DIRECTION_SERVER_TO_CLIENT      1
 #define TCP_DIRECTION_CLIENT_TO_SERVER      2
@@ -122,6 +126,14 @@ typedef struct {
 #define SE_ADDL_STAGE_AUTH       5  // sending the additional_connect PACK
 #define SE_ADDL_STAGE_AUTH_RESP  6  // reading the vpn.cgi response
 #define SE_ADDL_STAGE_SERVER_ERR 7  // server answered error=<n>
+#define SE_ADDL_STAGE_HTTP_ERR   8  // vpn.cgi answered a non-200 HTTP status
+#define SE_ADDL_STAGE_BAD_BODY   9  // vpn.cgi body was not a valid error=0 PACK
+
+// Connect timeout for an additional TCP socket. The primary connect uses the
+// session timeout (30 s), but a hung additional connect blocks the single
+// background thread for that whole time, so bound it much tighter: the
+// reference client also caps the additional-connect phase at CONNECTING_TIMEOUT.
+#define SE_ADDL_CONNECT_TIMEOUT_MS 10000
 
 // Optional platform hook invoked on a freshly created socket fd, before it is
 // connected. Android sets this to VpnService.protect so that additional TCP
@@ -191,6 +203,19 @@ typedef struct softether_connection {
     int recv_queue_tail;       // write position
     int recv_queue_count;      // number of queued frames
     uint32_t rx_skipped_blocks;  // Phase 13D: blocks dropped (too large / queue full)
+    // Phase 21: in-flight multi-block message state. The server can pack more
+    // blocks into one message than the receive queue holds (seen: 128 blocks vs
+    // RECV_QUEUE_SIZE=64). Instead of reading the whole message and dropping the
+    // overflow, fill_recv_queue stops when the queue is full and remembers how
+    // many blocks of the current message are still unread plus the socket they
+    // come from. The next call resumes exactly there, so no block is ever
+    // dropped. (The reference client streams blocks through a per-socket FIFO
+    // for the same reason.)
+    uint32_t recv_msg_pending_blocks;  // blocks left to read in the current message
+    void*    recv_msg_ssl;             // socket carrying the in-flight message
+    int      recv_msg_fd;
+    int      recv_msg_is_additional;
+    int      recv_msg_slot;
     // RUDP (UDP acceleration)
     rudp_context_t* rudp;
     int rudp_enabled;
@@ -262,19 +287,55 @@ typedef struct softether_connection {
     int half_connection;         // always 0 (half-duplex mode removed); every link is bidirectional
     int primary_direction;       // TCP_DIRECTION_* for primary socket (always BOTH now)
     uint32_t additional_connect_interval_ms;  // delay between additional-connect attempts (login-negotiated)
+    uint32_t additional_retry_delay_ms;  // Phase 21: current backoff delay after a failed attempt
     uint64_t next_connect_time;  // monotonic timestamp for next additional connect attempt (ms)
     int additional_failed_count; // serial failure counter for additional connects
     int additional_attempts;     // total additional-connect attempts (diagnostics)
     int additional_last_stage;   // SE_ADDL_STAGE_* of the last attempt (diagnostics)
     int additional_last_error;   // server "error" value of the last attempt, 0 if none
     int additional_last_attempt_ms;  // wall-clock duration of the last attempt (ms)
+    // Stage the last FINISHED attempt died at. `additional_last_stage` above is
+    // overwritten as soon as the next attempt starts, so reading it during a
+    // retry storm reports the in-flight attempt, not the failure. This one is
+    // written once, at the moment the attempt returns.
+    int additional_last_fail_stage;
+    // Human-readable specifics of the last finished attempt (target, errno,
+    // OpenSSL reason, HTTP status, local socket address). Surfaced in the app
+    // log so a failed multi-connection setup is diagnosable without logcat.
+    char additional_last_detail[192];
+    // Why the last data-link read failed, e.g. "primary fd=42 revents=0x10
+    // (POLLHUP)". The receive loop only sees a bare -1 from the native layer, so
+    // without this a dropped session could not be attributed to a link or a
+    // cause. Empty until a link has failed.
+    char last_link_error[160];
+    // Local address of the primary TCP socket, captured once it is connected.
+    // Additional links must leave from the same source address (the reference
+    // client binds them to it explicitly), so both ends are logged together.
+    char primary_local_ip[64];
+    int primary_local_port;
+    // Result of the platform protect hook on the last additional-connect
+    // attempt: 1 = the socket was excluded from the tunnel, -1 = the hook ran
+    // and failed, 0 = no hook installed. A tunnel-routed extra socket connects
+    // and handshakes fine but then stalls, so this is the difference between a
+    // real link and a phantom one.
+    int additional_last_protect;
     // Background additional connection thread
     pthread_t additional_thread; // background thread for non-blocking additional connect
     int additional_connecting;   // 1 if background thread is running
     int additional_connect_slot; // which slot the background thread is targeting
     int additional_connect_result; // result from background thread (0=success, -1=fail)
     int send_rr_idx;              // round-robin index for send socket selection
+    uint32_t primary_late_count;  // primary link: consecutive polls with no data
     uint64_t next_tcp_keepalive_time;  // monotonic timestamp for next periodic TCP keepalive sweep (ms)
+    // Per-link traffic distribution. Index 0 is the primary link, index i+1 is
+    // additional slot i. The send path adds the block length to the socket it
+    // actually chose (softether_select_send_socket, with failover), and the
+    // receive path adds it to the socket the message arrived on. The app log
+    // prints these so the session-wide totals can be split per TCP link —
+    // otherwise it is impossible to tell whether the extra connections carry any
+    // traffic or are just sitting there.
+    uint64_t link_tx_bytes[MAX_SE_CONNECTIONS + 1];
+    uint64_t link_rx_bytes[MAX_SE_CONNECTIONS + 1];
     // Platform hook to exclude new sockets from the VPN tunnel (see
     // softether_protect_fn). NULL when unset; copied into each additional
     // socket's protect_fn before connect.
@@ -434,10 +495,30 @@ typedef struct {
     int additional_last_stage;       // SE_ADDL_STAGE_* of the last attempt
     int additional_last_error;       // server "error" of the last attempt (0 = none)
     int additional_last_attempt_ms;  // duration of the last attempt (ms)
+    int additional_last_fail_stage;  // SE_ADDL_STAGE_* the last finished attempt died at
+    char additional_last_detail[192];// specifics of the last finished attempt
+    char primary_local_ip[64];       // primary TCP socket's local IP
+    int primary_local_port;          // primary TCP socket's local port
+    int protect_available;           // 1 = the platform protect hook is installed
+    int additional_last_protect;     // 1 = excluded from tunnel, -1 = hook failed, 0 = no hook
 } softether_session_info_t;
 
 void softether_get_session_info(softether_connection_t* conn,
                                 softether_session_info_t* out);
+
+// Copies the reason of the last data-link read failure (see last_link_error)
+// into `out`, always NUL-terminated. Empty when no link has failed yet.
+void softether_get_last_link_error(softether_connection_t* conn,
+                                   char* out, int max);
+
+// Per-link byte counters: index 0 is the primary link, index i+1 is additional
+// slot i. Copies up to `max` entries into tx_bytes/rx_bytes and returns the
+// number of slots written (MAX_SE_CONNECTIONS + 1). Lets the app log show how
+// the session's traffic spreads across its TCP links.
+int softether_get_link_stats(softether_connection_t* conn,
+                             uint64_t* tx_bytes,
+                             uint64_t* rx_bytes,
+                             int max);
 
 // DHCP result
 typedef struct {
