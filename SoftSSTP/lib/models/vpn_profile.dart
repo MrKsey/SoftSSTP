@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'vpn_protocol.dart';
+
+export 'vpn_protocol.dart';
+
 /// Ten preset colours a profile icon can use.
 const List<Color> profileColors = [
   Color(0xFF7C7CFF), // indigo (app primary)
@@ -13,25 +17,6 @@ const List<Color> profileColors = [
   Color(0xFFFFC107), // amber
   Color(0xFF8BC34A), // light green
 ];
-
-/// The VPN protocol a profile connects with.
-class VpnProtocol {
-  /// MS-SSTP over TLS (the app's original protocol).
-  static const String sstp = 'sstp';
-
-  /// SoftEther VPN (SSL-VPN) over TLS.
-  static const String softether = 'softether';
-
-  static const List<String> values = [sstp, softether];
-
-  /// Human readable label, e.g. "SSTP" or "SoftEther".
-  static String label(String value) =>
-      value == softether ? 'SoftEther' : 'SSTP';
-
-  /// Short badge label for server lists.
-  static String badge(String value) =>
-      value == softether ? 'SoftEther' : 'SSTP';
-}
 
 /// A named set of VPN settings.
 ///

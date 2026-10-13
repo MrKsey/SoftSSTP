@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/public_profile.dart';
-import '../models/vpn_profile.dart';
+import '../models/vpn_protocol.dart';
 
 /// Fetches and parses the public server table from https://www.vpngate.net and
 /// measures the latency from the device to each server.

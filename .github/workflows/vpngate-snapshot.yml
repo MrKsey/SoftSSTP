@@ -1,0 +1,53 @@
+name: Refresh VPN Gate snapshot
+
+# Keeps the bundled VPN Gate server list
+# (SoftSSTP/assets/data/vpngate_servers.json) fresh, so the public-profiles
+# screen still has entries when vpngate.net is unreachable. Runs weekly and on
+# demand, and commits only when the list actually changed. The asset carries no
+# code, so a change to it does not trigger the release build.
+on:
+  schedule:
+    # Every Monday at 03:17 UTC.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    name: Refresh bundled server list
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.6'
+          cache: true
+
+      - name: Get dependencies
+        working-directory: SoftSSTP
+        run: flutter pub get
+
+      - name: Regenerate the snapshot
+        working-directory: SoftSSTP
+        run: dart run tool/update_vpngate_snapshot.dart
+
+      - name: Commit the refreshed list
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- SoftSSTP/assets/data/vpngate_servers.json; then
+            echo "No change in the server list."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SoftSSTP/assets/data/vpngate_servers.json
+          git commit -m "chore(snapshot): refresh the bundled VPN Gate server list"
+          git push

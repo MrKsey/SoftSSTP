@@ -20,6 +20,9 @@ on:
       - '.gitignore'
       - 'fastlane/**'
       - 'fdroid/**'
+      # The bundled server list is data, not code; the snapshot workflow updates
+      # it on its own and a refresh does not need a build.
+      - 'SoftSSTP/assets/data/**'
   workflow_dispatch:
     inputs:
       publish_release:

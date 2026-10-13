@@ -351,6 +351,7 @@ class SoftEtherClient {
         const val OPTION_TIMEOUT = 1
         const val OPTION_UDP_PORT = 4
         const val OPTION_UDP_ONLY = 5
+        const val OPTION_IDLE_POLL_MS = 6
 
         private fun intToIpString(ip: Int): String {
             return "${(ip ushr 24) and 0xFF}.${(ip ushr 16) and 0xFF}.${(ip ushr 8) and 0xFF}.${ip and 0xFF}"

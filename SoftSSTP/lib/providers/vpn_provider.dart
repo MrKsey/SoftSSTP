@@ -16,7 +16,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/app_list_preset.dart';
 import '../models/vpn_profile.dart';
+import '../services/app_info.dart';
 import '../services/network_monitor.dart';
+import '../services/update_service.dart';
 
 enum VpnStatus { disconnected, connecting, reconnecting, connected }
 
@@ -100,6 +102,25 @@ class VpnProvider extends ChangeNotifier {
   /// rest of the log. The split written when a session ends or switches is
   /// always recorded, so the distribution is never lost.
   bool _perLinkStatsEnabled = false;
+
+  /// Automatic update check against the project's GitHub releases. On by
+  /// default; the Update section in Settings can turn it off.
+  bool _updateCheckEnabled = true;
+
+  /// The newer release found by the last check, or null when up to date.
+  UpdateInfo? _availableUpdate;
+
+  /// True while a release check is running.
+  bool _updateCheckInFlight = false;
+
+  /// Version the user was already told about, so the startup dialog does not
+  /// reappear on every launch.
+  String _lastNotifiedVersion = '';
+
+  /// Energy saving: fewer periodic wake-ups while a tunnel is up. Read live by
+  /// the SSTP plugin; the SoftEther plugin picks it up on the next connect.
+  bool _powerSavingEnabled = false;
+
   String _externalIpBefore = '';
   String _externalIpAfter = '';
   String _beforeLocation = '';
@@ -274,6 +295,10 @@ class VpnProvider extends ChangeNotifier {
   bool get seDisableQos => _seDisableQos;
   bool get connectionLogEnabled => _connectionLogEnabled;
   bool get perLinkStatsEnabled => _perLinkStatsEnabled;
+  bool get updateCheckEnabled => _updateCheckEnabled;
+  UpdateInfo? get availableUpdate => _availableUpdate;
+  bool get updateCheckInFlight => _updateCheckInFlight;
+  bool get powerSavingEnabled => _powerSavingEnabled;
   String get externalIpBefore => _externalIpBefore;
   String get externalIpAfter => _externalIpAfter;
   String get beforeLocation => _beforeLocation;
@@ -880,6 +905,9 @@ class VpnProvider extends ChangeNotifier {
     _customSni = prefs.getString('vpn_custom_sni') ?? '';
     _connectionLogEnabled = prefs.getBool('vpn_connection_log') ?? false;
     _perLinkStatsEnabled = prefs.getBool('vpn_per_link_stats') ?? false;
+    _updateCheckEnabled = prefs.getBool('vpn_update_check') ?? true;
+    _lastNotifiedVersion = prefs.getString('vpn_update_notified') ?? '';
+    _powerSavingEnabled = prefs.getBool('vpn_power_saving') ?? false;
     _pppMtu = prefs.getInt('vpn_ppp_mtu') ?? 1500;
     _pppMru = prefs.getInt('vpn_ppp_mru') ?? 1500;
     _authProtocol = prefs.getString('vpn_auth_protocol') ?? 'AUTO';
@@ -900,6 +928,9 @@ class VpnProvider extends ChangeNotifier {
     // Propagate the persisted logging preference to both native plugins so logs
     // are collected even before this session's first connect.
     unawaited(_applyConnectionLogging());
+
+    // Same for the energy-saving preference.
+    unawaited(_applyPowerSaving());
 
     // Saved app selections shared by all profiles.
     final rawPresets = prefs.getString('vpn_app_presets');
@@ -1358,9 +1389,13 @@ class VpnProvider extends ChangeNotifier {
       _sstpFlutter.isIgnoringBatteryOptimizations();
 
   /// Asks the system to exempt SoftSSTP from battery optimization, so Android
-  /// does not stop the tunnel while the app is in the background.
   Future<bool> requestIgnoreBatteryOptimizations() =>
       _sstpFlutter.requestIgnoreBatteryOptimizations();
+
+  /// Opens the system list of battery-optimization exemptions, where the user
+  /// can remove the exemption for SoftSSTP by hand.
+  Future<bool> openBatteryOptimizationList() =>
+      _sstpFlutter.openBatteryOptimizationList();
 
   Future<void> connect() async {
     // A fresh user-initiated connect restarts the Auto negotiation from the top
@@ -1613,6 +1648,7 @@ class VpnProvider extends ChangeNotifier {
       disableUdpAcceleration: _seDisableUdpAcceleration,
       udpPort: _seUdpPort,
       qos: !_seDisableQos,
+      powerSaving: _powerSavingEnabled,
     );
     // Make sure the native side knows whether to persist the log.
     await _softether.setConnectionLogging(enabled: _connectionLogEnabled);
@@ -1968,6 +2004,72 @@ class VpnProvider extends ChangeNotifier {
     await prefs.setBool('vpn_per_link_stats', enabled);
     await _applyConnectionLogging();
     notifyListeners();
+  }
+
+  /// Persists the automatic update-check preference.
+  Future<void> saveUpdateCheck(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    _updateCheckEnabled = enabled;
+    await prefs.setBool('vpn_update_check', enabled);
+    notifyListeners();
+  }
+
+  /// Runs a release check. Throws [UpdateCheckException] when it fails. On
+  /// success stores the result and returns it, or null when the build is up to
+  /// date.
+  Future<UpdateInfo?> checkForUpdate() async {
+    if (_updateCheckInFlight) return _availableUpdate;
+    _updateCheckInFlight = true;
+    notifyListeners();
+    try {
+      final appInfo = await AppInfo.load();
+      final update = await UpdateService.checkForUpdate(
+        currentVersion: appInfo.versionName,
+      );
+      _availableUpdate = update;
+      return update;
+    } finally {
+      _updateCheckInFlight = false;
+      notifyListeners();
+    }
+  }
+
+  /// Startup check: only when enabled, and only announces a version the user has
+  /// not already been told about. Never throws.
+  Future<UpdateInfo?> checkForUpdateOnStart() async {
+    if (!_updateCheckEnabled) return null;
+    try {
+      final update = await checkForUpdate();
+      if (update == null || update.version == _lastNotifiedVersion) return null;
+      return update;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Remembers the version the user was shown, so the startup dialog stays quiet
+  /// about it afterwards.
+  Future<void> markUpdateNotified(UpdateInfo info) async {
+    final prefs = await SharedPreferences.getInstance();
+    _lastNotifiedVersion = info.version;
+    await prefs.setString('vpn_update_notified', info.version);
+  }
+
+  /// Persists the energy-saving preference and pushes it to the plugins. The
+  /// SSTP side reads it live; the SoftEther side applies it on the next connect.
+  Future<void> savePowerSaving(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    _powerSavingEnabled = enabled;
+    await prefs.setBool('vpn_power_saving', enabled);
+    await _applyPowerSaving();
+    notifyListeners();
+  }
+
+  /// Pushes the energy-saving preference to the SSTP plugin.
+  Future<void> _applyPowerSaving() async {
+    try {
+      await _sstpFlutter.setPowerSaving(enabled: _powerSavingEnabled);
+    } catch (_) {}
   }
 
   /// Pushes the current logging preferences to the native plugins.

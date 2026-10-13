@@ -713,6 +713,10 @@ JNIEXPORT void JNICALL Java_vn_unlimit_softether_client_SoftEtherClient_nativeSe
             conn->udp_only = (int)value;
             LOGD("Set UDP-only to %d", conn->udp_only);
             break;
+        case 6: // OPTION_IDLE_POLL_MS — receive-loop idle wait (energy saving)
+            conn->idle_poll_ms = (int)value;
+            LOGD("Set idle poll to %d ms", conn->idle_poll_ms);
+            break;
         default:
             LOGE("Unknown option: %d", option);
             break;

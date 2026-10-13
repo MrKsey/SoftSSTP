@@ -1147,10 +1147,10 @@ static int softether_fill_recv_queue_locked(softether_connection_t* conn) {
 
     if (ssl_pending_idx < 0) {
         // No SSL-buffered data — poll all sockets
-        // 100ms idle wait in both paths: poll wakes immediately on data, so
-        // this only bounds how often an idle connection wakes the Java RX
-        // loop (Phase 13E: < 10 wakeups/s at idle).
-        int poll_timeout_ms = 100;
+        // Idle wait: poll wakes immediately on data, so this only bounds how
+        // often an idle connection wakes the Java RX loop. Default 100 ms
+        // (< 10 wakeups/s at idle); the app's energy-saving switch raises it.
+        int poll_timeout_ms = conn->idle_poll_ms > 0 ? conn->idle_poll_ms : 100;
         int poll_ret = poll(fds, nfds, poll_timeout_ms);
 
         if (poll_ret == 0) {

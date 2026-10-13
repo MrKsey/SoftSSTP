@@ -113,8 +113,15 @@ The Settings screen is made of blocks.
   public profile and Import profile live here too.
 - Diagnostics: the Connection logging switch, the Per-link statistics switch and the
   View connection log entry.
-- Background: the system battery-optimization exemption. Without it Android may stop
-  the VPN in the background.
+- Background: the system battery-optimization exemption and the Energy saving switch.
+  Without the exemption Android may stop the VPN in the background. Energy saving makes
+  the app wake the CPU less often while a tunnel is idle, so the status and speed
+  refresh slower; the traffic speed itself is unaffected. It is off by default and can
+  be turned off again during tests.
+- Update: a switch for the automatic check at startup, a Check now entry and, when a
+  newer release exists, a Download entry that fetches the APK for this device and opens
+  the system installer. Android asks once for permission to install apps. The whole
+  block is hidden in the F-Droid build, which does not allow an app to update itself.
 - Donate and About: donation wallets and links to the project.
 
 A profile opens on tap and has its own blocks.
@@ -181,6 +188,22 @@ server. If the extra links never come up, the log shows how many links actually 
 and why each failed attempt died. The Per-link statistics switch adds a traffic split per
 link every 5 seconds, and the split at the end of a session is always written.
 
+Download and upload use the links differently. Download is decided by the server: it
+settles on one connection for the data and keeps sending there, so the extra links carry
+only keepalives and background traffic while a single connection pulls the whole
+download. Upload is picked by the client for every block, but not by spreading the load:
+the block goes to the link that most recently delivered data (the reference client's
+LateCount rule), and round-robin only breaks a tie. In practice one link carries almost
+all the upload, usually the same one that carries the download, so the split at the end
+of a session looks like `primary tx=137.5M rx=135.6M | addl1 tx=1.8M rx=262.4K`. Raising
+the number of connections therefore buys resilience and gives the server more links to
+choose from, not extra upload throughput.
+
+Two connections already provide a fallback. If the active link drops, the server moves the
+data to the second one, and the tunnel survives an outage that would kill a single
+connection. Raising the number past two is pointless. In testing with four links all the
+traffic still went down one of them, with no gain in speed.
+
 ## Build from source
 
 ```bash
@@ -228,7 +251,8 @@ The build recipe lives in `fdroid/io.github.mrksey.softsstp.yml` and the release
 for F-Droid in `fastlane/metadata/android`. The SoftEther plugin builds OpenSSL from
 source and no prebuilt `.so` files are committed, so the recipe pins the submodule and
 the NDK. Each architecture gets its own build entry with a version code from
-`VercodeOperation`.
+`VercodeOperation`. Every F-Droid build passes `--dart-define=FDROID=true`, which hides
+the Update block, since F-Droid does not allow an app to install its own APKs.
 
 ## Donate
 

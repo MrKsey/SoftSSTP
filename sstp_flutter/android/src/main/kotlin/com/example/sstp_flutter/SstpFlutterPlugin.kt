@@ -296,6 +296,16 @@ class SstpFlutterPlugin: FlutterPlugin, MethodCallHandler , ActivityAware, Flutt
         result.success(ConnectionLog.read())
       }
 
+      call.method.equals("setPowerSaving") -> {
+        // Energy saving only changes the cadence of the periodic cycles, so it
+        // needs no protocol work; the receive path reads the preference live.
+        val enabled = call.argument<Boolean>("enabled") ?: false
+        setBooleanPrefValue(enabled, OscPrefKey.POWER_SAVING, prefs)
+        ConnectionLog.append("POWER", "Energy saving ${if (enabled) "enabled" else "disabled"}")
+        result.success(true)
+      }
+
+
       call.method.equals("logMessage") -> {
         // Lets the Dart layer write lifecycle markers (protocol switch, teardown)
         // into the shared connection log, which is otherwise written only from
@@ -330,6 +340,25 @@ class SstpFlutterPlugin: FlutterPlugin, MethodCallHandler , ActivityAware, Flutt
           result.success(openBatteryOptimizationSettings())
         }
       }
+
+      // The exemption can only be removed by hand, so this just opens the system
+      // list where the user can turn it off for SoftSSTP.
+      call.method.equals("openBatteryOptimizationList") -> {
+        result.success(openBatteryOptimizationList())
+      }
+    }
+  }
+
+  /** Opens the system list of battery-optimization exemptions. */
+  private fun openBatteryOptimizationList(): Boolean {
+    if (!::activityBinding.isInitialized) return false
+    return try {
+      activityBinding.activity.startActivity(
+        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+      )
+      true
+    } catch (e: Exception) {
+      false
     }
   }
 

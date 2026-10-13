@@ -6,6 +6,7 @@ import '../models/vpn_profile.dart';
 import '../providers/vpn_provider.dart';
 import '../services/country_flags.dart';
 import '../services/vpngate_service.dart';
+import '../services/vpngate_snapshot.dart';
 import '../theme/app_theme.dart';
 import 'profile_settings_screen.dart';
 
@@ -43,6 +44,10 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
 
   bool _loading = true;
   String _error = '';
+
+  /// True when the list came from the bundled snapshot because vpngate.net
+  /// could not be reached. Drives the "offline list" notice.
+  bool _fromSnapshot = false;
 
   // Default ordering: fastest server first.
   _SortKey _sortKey = _SortKey.ping;
@@ -127,6 +132,7 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       _error = '';
       _entries.clear();
       _pingFutures.clear();
+      _fromSnapshot = false;
     });
 
     try {
@@ -138,11 +144,23 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       });
       _measurePings();
     } catch (_) {
+      // The live page could not be reached: fall back to the bundled snapshot so
+      // the list still works without a connection.
+      final snapshot = await VpngateSnapshot.load();
       if (!mounted) return;
+      if (snapshot.isEmpty) {
+        setState(() {
+          _loading = false;
+          _error = 'Could not load the server list. Check your connection.';
+        });
+        return;
+      }
       setState(() {
+        _fromSnapshot = true;
+        _entries.addAll(snapshot.map(_ServerEntry.new));
         _loading = false;
-        _error = 'Could not load the server list. Check your connection.';
       });
+      _measurePings();
     }
   }
 
@@ -578,6 +596,7 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
     return Column(
       children: [
         _buildSortHeader(sorted.length, hiddenAdded),
+        if (_fromSnapshot) _buildSnapshotNotice(),
         Expanded(
           child: sorted.isEmpty
               ? Center(
@@ -650,6 +669,33 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
           Text(
             'Sort: ${_sortKey.label} ${_sortAsc ? '▲' : '▼'}',
             style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shown when the list came from the bundled snapshot instead of the live
+  /// page, so the user knows the entries and their ping may be out of date.
+  Widget _buildSnapshotNotice() {
+    return Container(
+      width: double.infinity,
+      color: AppTheme.cardColor,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Row(
+        children: [
+          Icon(
+            Icons.cloud_off_outlined,
+            size: 16,
+            color: AppTheme.textSecondary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Offline list: vpngate.net is unreachable, showing the built-in '
+              'copy. Entries may be out of date.',
+              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            ),
           ),
         ],
       ),

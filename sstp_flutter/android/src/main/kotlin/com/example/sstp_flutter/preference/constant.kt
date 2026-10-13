@@ -51,6 +51,9 @@ enum class OscPrefKey {
     RECONNECTION_LIFE,
     LOG_DO_SAVE_LOG,
     LOG_DIR,
+    // Energy saving: slows the periodic traffic/notification cycle so the app
+    // wakes the CPU less often while connected. Not a protocol option.
+    POWER_SAVING,
     ON_ANDROID_START,
     ON_WIFI_CONNECTED,
     ON_MOBILE_DATA_CONNECTED,
@@ -84,7 +87,8 @@ internal val DEFAULT_BOOLEAN_MAP = mapOf(
     OscPrefKey.ROUTE_DO_ADD_CUSTOM_ROUTES to false,
     OscPrefKey.ROUTE_DO_ENABLE_APP_BASED_RULE to false,
     OscPrefKey.RECONNECTION_ENABLED to false,
-    OscPrefKey.LOG_DO_SAVE_LOG to false
+    OscPrefKey.LOG_DO_SAVE_LOG to false,
+    OscPrefKey.POWER_SAVING to false
 )
 
 internal val DEFAULT_INT_MAP = mapOf(

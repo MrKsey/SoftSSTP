@@ -202,6 +202,7 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             useEncrypt = call.argument<Boolean>("useEncrypt") ?: true,
             useCompress = call.argument<Boolean>("useCompress") ?: false,
             qos = call.argument<Boolean>("qos") ?: true,
+            powerSaving = call.argument<Boolean>("powerSaving") ?: false,
         )
     }
 

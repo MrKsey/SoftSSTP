@@ -72,6 +72,11 @@ class SoftetherServer {
   /// Keep VoIP / QoS functions ("Disable VoIP / QoS Functions" unchecked).
   final bool qos;
 
+  /// Energy saving. When true the native receive loop waits longer between idle
+  /// wakeups and the per-second housekeeping cycles are stretched, so an idle
+  /// tunnel drains the battery less. Data still arrives immediately.
+  final bool powerSaving;
+
   const SoftetherServer({
     required this.host,
     this.port = 443,
@@ -93,6 +98,7 @@ class SoftetherServer {
     this.disableUdpAcceleration = true,
     this.udpPort = 0,
     this.qos = true,
+    this.powerSaving = false,
   });
 
   Map<String, dynamic> toMap() => {
@@ -116,6 +122,7 @@ class SoftetherServer {
         'disableUdpAcceleration': disableUdpAcceleration,
         'udpPort': udpPort,
         'qos': qos,
+        'powerSaving': powerSaving,
       };
 }
 

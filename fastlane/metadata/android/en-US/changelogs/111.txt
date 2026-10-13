@@ -1,0 +1,1 @@
+New Energy saving switch in Settings, which wakes the CPU less often while a tunnel is idle. The VPN Gate server list is now bundled, so public profiles work when the live page is unreachable. SSTP sessions log byte and packet totals. SoftEther extra TCP links reconnect more reliably. The in-app updater is not part of the F-Droid build.

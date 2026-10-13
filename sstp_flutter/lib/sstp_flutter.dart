@@ -342,6 +342,19 @@ class SstpFlutter {
     }
   }
 
+  /// Enables or disables the energy-saving mode. While it is on, the periodic
+  /// traffic / notification cycle runs less often, so the app wakes the CPU less
+  /// while a tunnel is up. The data path is unaffected.
+  ///
+  /// WARNING : it's available only on Android
+  Future<void> setPowerSaving({required bool enabled}) async {
+    try {
+      await channelHandler.setPowerSaving(enabled: enabled);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   /// Writes a lifecycle marker (protocol switch, teardown, …) into the shared
   /// connection log. No-op when logging is disabled or on unsupported platforms.
   ///
@@ -405,6 +418,18 @@ class SstpFlutter {
   Future<bool> requestIgnoreBatteryOptimizations() async {
     try {
       return await channelHandler.requestIgnoreBatteryOptimizations();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the system list of battery-optimization exemptions, where the user
+  /// can remove the exemption for SoftSSTP by hand.
+  ///
+  /// WARNING : it's available only on Android
+  Future<bool> openBatteryOptimizationList() async {
+    try {
+      return await channelHandler.openBatteryOptimizationList();
     } catch (_) {
       return false;
     }

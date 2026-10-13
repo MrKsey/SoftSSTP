@@ -63,7 +63,11 @@ data class ConnectionConfig(
     val establishIntervalMs: Int = 1000,
     val useEncrypt: Boolean = true,
     val useCompress: Boolean = false,
-    val qos: Boolean = true
+    val qos: Boolean = true,
+    // Energy saving: raises the native receive-loop idle wait and slows the
+    // per-second housekeeping cycles, so an idle tunnel wakes the CPU less
+    // often. Data still arrives at once (poll() returns on the first byte).
+    val powerSaving: Boolean = false
 ) : Parcelable {
 
     constructor(parcel: Parcel) : this(
@@ -104,7 +108,8 @@ data class ConnectionConfig(
         establishIntervalMs = parcel.readInt(),
         useEncrypt = parcel.readByte() != 0.toByte(),
         useCompress = parcel.readByte() != 0.toByte(),
-        qos = parcel.readByte() != 0.toByte()
+        qos = parcel.readByte() != 0.toByte(),
+        powerSaving = parcel.readByte() != 0.toByte()
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -146,6 +151,7 @@ data class ConnectionConfig(
         parcel.writeByte(if (useEncrypt) 1 else 0)
         parcel.writeByte(if (useCompress) 1 else 0)
         parcel.writeByte(if (qos) 1 else 0)
+        parcel.writeByte(if (powerSaving) 1 else 0)
     }
 
     override fun describeContents(): Int = 0

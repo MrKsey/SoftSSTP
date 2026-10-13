@@ -7,8 +7,10 @@ import '../providers/vpn_provider.dart';
 import '../services/app_info.dart';
 import '../services/link_launcher.dart';
 import '../services/profile_transfer.dart';
+import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/public_profile_badge.dart';
+import '../widgets/update_prompt.dart';
 import 'log_screen.dart';
 import 'profile_settings_screen.dart';
 import 'public_profiles_screen.dart';
@@ -257,31 +259,39 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
     }
   }
 
-  Future<void> _handleBatteryOptimizationTap() async {
+  /// Switch handler for the battery optimization row. Turning the exemption on
+  /// asks the system for it; turning it off is a manual step in the system
+  /// settings, so it opens the exemption list instead.
+  Future<void> _setBatteryOptimization(bool value) async {
     final provider = context.read<VpnProvider>();
-    if (_ignoringBatteryOptimizations) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('SoftSSTP is already exempt from battery optimization'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (value) {
+      final requested = await provider.requestIgnoreBatteryOptimizations();
+      if (!mounted) return;
+      if (!requested) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Could not open the battery optimization settings'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+      // The user confirms in a system dialog; the state is re-read when they
+      // return to the app.
+      await _loadBatteryOptimizationStatus();
       return;
     }
 
-    final requested = await provider.requestIgnoreBatteryOptimizations();
+    await provider.openBatteryOptimizationList();
     if (!mounted) return;
-    if (!requested) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not open the battery optimization settings'),
-          duration: Duration(seconds: 3),
-        ),
-      );
-      return;
-    }
-    // The user confirms in a system dialog; the state is re-read when they
-    // return to the app.
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Remove the exemption for SoftSSTP in the list'),
+        duration: Duration(seconds: 3),
+      ),
+    );
     await _loadBatteryOptimizationStatus();
   }
 
@@ -313,12 +323,18 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                 const SizedBox(height: 32),
                 _buildSectionTitle('Background'),
                 const SizedBox(height: 16),
-                _buildBackgroundSection(),
+                _buildBackgroundSection(provider),
                 const SizedBox(height: 32),
                 _buildSectionTitle('Donate'),
                 const SizedBox(height: 16),
                 _buildDonateSection(),
                 const SizedBox(height: 32),
+                if (!UpdateService.isFdroidBuild) ...[
+                  _buildSectionTitle('Update'),
+                  const SizedBox(height: 16),
+                  _buildUpdateSection(provider),
+                  const SizedBox(height: 32),
+                ],
                 _buildSectionTitle('About'),
                 const SizedBox(height: 16),
                 _buildAboutSection(),
@@ -774,7 +790,7 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
     );
   }
 
-  Widget _buildBackgroundSection() {
+  Widget _buildBackgroundSection(VpnProvider provider) {
     final exempt = _ignoringBatteryOptimizations;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 19),
@@ -782,12 +798,9 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
         color: AppTheme.cardColor,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: InkWell(
-        onTap: _handleBatteryOptimizationTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
+      child: Column(
+        children: [
+          Row(
             children: [
               Icon(
                 exempt ? Icons.battery_saver : Icons.battery_alert_outlined,
@@ -820,10 +833,183 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+              Switch(value: exempt, onChanged: _setBatteryOptimization),
             ],
           ),
-        ),
+          Divider(color: AppTheme.dividerColor, height: 24),
+          Row(
+            children: [
+              Icon(
+                Icons.energy_savings_leaf_outlined,
+                color: provider.powerSavingEnabled
+                    ? AppTheme.primaryColor
+                    : AppTheme.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Energy saving',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Wake the CPU less often while idle. Traffic speed is '
+                      'unaffected, the status and speed refresh slower',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: provider.powerSavingEnabled,
+                onChanged: provider.savePowerSaving,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Manual release check from the Update section. Reports the outcome inline:
+  /// up to date, a new version (opens the download dialog) or a failure.
+  Future<void> _checkForUpdates() async {
+    final provider = context.read<VpnProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final update = await provider.checkForUpdate();
+      if (!mounted) return;
+      if (update == null) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('You are running the latest version')),
+        );
+        return;
+      }
+      await provider.markUpdateNotified(update);
+      if (!mounted) return;
+      await showUpdatePrompt(context, update);
+    } on UpdateCheckException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not check for updates: $e')),
+      );
+    }
+  }
+
+  Widget _buildUpdateSection(VpnProvider provider) {
+    final update = provider.availableUpdate;
+    final checking = provider.updateCheckInFlight;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 19),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Icon(Icons.system_update_alt, color: AppTheme.primaryColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Check for updates automatically',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Look for a newer release when the app starts',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: provider.updateCheckEnabled,
+                onChanged: provider.saveUpdateCheck,
+              ),
+            ],
+          ),
+          Divider(color: AppTheme.dividerColor, height: 24),
+          InkWell(
+            onTap: checking ? null : _checkForUpdates,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.refresh, color: AppTheme.primaryColor),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      checking ? 'Checking…' : 'Check for updates now',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  if (checking)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+                ],
+              ),
+            ),
+          ),
+          if (update != null) ...[
+            Divider(color: AppTheme.dividerColor, height: 24),
+            InkWell(
+              onTap: () => startUpdate(context, update),
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.download_outlined, color: AppTheme.primaryColor),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Download version ${update.version}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

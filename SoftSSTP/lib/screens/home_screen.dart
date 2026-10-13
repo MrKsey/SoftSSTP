@@ -4,6 +4,7 @@ import '../providers/theme_controller.dart';
 import '../providers/vpn_provider.dart';
 import '../services/ip_utils.dart';
 import '../theme/app_theme.dart';
+import '../widgets/update_prompt.dart';
 import 'apps_screen.dart';
 import 'general_settings_screen.dart';
 import 'profile_picker_screen.dart';
@@ -34,6 +35,17 @@ class _HomeScreenState extends State<HomeScreen>
     _animationController.repeat(reverse: true);
 
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+  }
+
+  /// Startup update check. Announces a newer release once per version.
+  Future<void> _checkForUpdate() async {
+    final provider = context.read<VpnProvider>();
+    final update = await provider.checkForUpdateOnStart();
+    if (update == null || !mounted) return;
+    await provider.markUpdateNotified(update);
+    if (!mounted) return;
+    await showUpdatePrompt(context, update);
   }
 
   @override

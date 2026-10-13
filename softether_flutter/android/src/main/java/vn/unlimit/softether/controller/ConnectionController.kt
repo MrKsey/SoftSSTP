@@ -52,7 +52,17 @@ class ConnectionController(
         private const val LINK_STATS_LOG_INTERVAL_MS = 5000L
         private const val RX_BATCH_MAX_PACKETS = 32  // Phase 13D: frames per receiveBatch call
         private const val NATIVE_TEARDOWN_TIMEOUT_MS = 500L
+        // Energy saving: idle wait of the native receive loop, and the stretch
+        // applied to the per-second housekeeping cycles while it is on.
+        private const val IDLE_POLL_MS = 100
+        private const val IDLE_POLL_POWER_SAVE_MS = 500
+        private const val POWER_SAVE_CYCLE_FACTOR = 3
     }
+
+    /** Stretch applied to the periodic housekeeping cycles (1 when off). */
+    private val powerSaveCycleFactor: Long =
+        if (config.powerSaving) POWER_SAVE_CYCLE_FACTOR.toLong() else 1L
+
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val client = SoftEtherClient()
@@ -291,6 +301,21 @@ class ConnectionController(
         }
     }
 
+    /**
+     * Applies the energy-saving idle wait to the active native handle. poll()
+     * still returns on the first byte, so this only changes how often an idle
+     * tunnel wakes the CPU.
+     */
+    private fun applyPowerSaving() {
+        runCatching {
+            val idlePollMs = if (config.powerSaving) IDLE_POLL_POWER_SAVE_MS else IDLE_POLL_MS
+            client.nativeSetOption(nativeHandle, SoftEtherClient.OPTION_IDLE_POLL_MS, idlePollMs.toLong())
+            Log.d(TAG, "Idle poll: ${idlePollMs}ms (power saving=${config.powerSaving})")
+        }.onFailure {
+            Log.w(TAG, "Failed to set the idle poll", it)
+        }
+    }
+
     /** Stable locally-administered unicast MAC derived from the server identity. */
     private fun deriveClientMac(): ByteArray {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
@@ -422,6 +447,8 @@ class ConnectionController(
 
         // Set timeout
         client.setTimeout(config.connectTimeoutMs)
+        applyPowerSaving()
+
 
         // Stable client MAC. When the profile pins one, use it verbatim;
         // otherwise derive it from the server identity. On local-bridge servers a
@@ -1071,6 +1098,8 @@ connectInFlight.set(true)
 
             // Re-apply the client MAC to the fresh reconnect handle.
             applyClientMac()
+            applyPowerSaving()
+
 
             // Set auth type
             val hubName = config.virtualHub.ifEmpty { "VPN" }
@@ -1224,7 +1253,7 @@ connectInFlight.set(true)
             var lastWatchdogLog = 0L
             while (isConnected() && !isCancelled.get()) {
                 try {
-                    delay(1000) // Check every second
+                    delay(1000L * powerSaveCycleFactor) // Check every second (stretched by energy saving)
 
                     if (keepAliveManager.shouldSendKeepAlive()) {
                         // Keepalive is handled in native layer
@@ -1373,7 +1402,7 @@ connectInFlight.set(true)
                 currentState != ConnectionState.ERROR
             ) {
                 try {
-                    delay(STATS_INTERVAL_MS)
+                    delay(STATS_INTERVAL_MS * powerSaveCycleFactor)
                     if (isConnected()) {
                         // Publish the speed snapshot ONLY here, once per second.
                         // It used to also be published from the hot send/receive

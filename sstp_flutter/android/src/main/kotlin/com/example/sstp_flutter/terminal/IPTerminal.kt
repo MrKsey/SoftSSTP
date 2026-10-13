@@ -29,6 +29,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 private const val TRAFFIC_REPORT_INTERVAL_MS = 1_000L
 
+// Energy saving stretches the reporter (and therefore the notification refresh)
+// so an idle tunnel wakes the CPU less often. It does not touch the data path,
+// which blocks on the TUN read.
+private const val TRAFFIC_REPORT_INTERVAL_POWER_SAVE_MS = 3_000L
+
 // `establish()` can return null on some devices when a previous TUN interface
 // has not been released yet. Retry a few times with a fresh builder before
 // giving up, so a transient failure does not abort the whole connection.
@@ -48,15 +53,23 @@ internal class IPTerminal(private val bridge: ClientBridge) {
     private val isCustomDNSServerUsed = getBooleanPrefValue(OscPrefKey.DNS_DO_USE_CUSTOM_SERVER, bridge.prefs)
     private val isCustomRoutesAdded = getBooleanPrefValue(OscPrefKey.ROUTE_DO_ADD_CUSTOM_ROUTES, bridge.prefs)
 
-    // Byte counters are updated on the hot data path (one increment per packet)
-    // and read once per second by the reporter. AtomicLong keeps the increments
-    // cheap and correct without any locks.
+    // Byte and packet counters are updated on the hot data path (one increment
+    // per packet) and read once per second by the reporter. AtomicLong keeps the
+    // increments cheap and correct without any locks. The packet counts feed the
+    // end-of-session summary only.
     private val totalDownloadBytes = AtomicLong(0)
     private val totalUploadBytes = AtomicLong(0)
+    private val totalDownloadPackets = AtomicLong(0)
+    private val totalUploadPackets = AtomicLong(0)
+
+    // Guards the one-shot end-of-session summary: close() is reached from several
+    // teardown paths, and only the first one carries the real totals.
+    private var sessionEndLogged = false
 
     private var trafficJob: Job? = null
     private var lastReportedDownloadBytes = 0L
     private var lastReportedUploadBytes = 0L
+    private var lastReportAtMs = 0L
 
     @SuppressLint("NewApi")
     internal suspend fun initialize() {
@@ -297,8 +310,30 @@ internal class IPTerminal(private val bridge: ClientBridge) {
     private fun resetTrafficCounters() {
         totalDownloadBytes.set(0)
         totalUploadBytes.set(0)
+        totalDownloadPackets.set(0)
+        totalUploadPackets.set(0)
         trafficTotalDownloadBits = 0L
         trafficTotalUploadBits = 0L
+    }
+
+    /**
+     * Writes the end-of-session summary (byte and packet totals) to the app log.
+     * The connect path already writes the phase lines, so a matching end line is
+     * what makes it possible to read how much a tunnel carried without a logcat.
+     * Called from [close] before the counters are reset; guarded so repeated
+     * teardown paths (kill, shutdown, service close) log it only once.
+     */
+    private fun logSessionEnd() {
+        if (sessionEndLogged) return
+        val downloadBytes = totalDownloadBytes.get()
+        val uploadBytes = totalUploadBytes.get()
+        if (downloadBytes == 0L && uploadBytes == 0L) return
+        sessionEndLogged = true
+        ConnectionLog.append(
+            "PHASE",
+            "Session stopped — session ended (tx=${totalUploadPackets.get()}p/${uploadBytes}B " +
+                "rx=${totalDownloadPackets.get()}p/${downloadBytes}B)"
+        )
     }
 
     /** Closes the TUN descriptor and its streams, tolerating repeated calls. */
@@ -317,6 +352,7 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         outputStream?.write(buffer.array(), start, size)
         if (size > 0) {
             totalDownloadBytes.addAndGet(size.toLong())
+            totalDownloadPackets.incrementAndGet()
         }
     }
 
@@ -328,6 +364,7 @@ internal class IPTerminal(private val bridge: ClientBridge) {
 
         if (bytesRead > 0) {
             totalUploadBytes.addAndGet(bytesRead.toLong())
+            totalUploadPackets.incrementAndGet()
         }
     }
 
@@ -343,10 +380,11 @@ internal class IPTerminal(private val bridge: ClientBridge) {
 
         lastReportedDownloadBytes = totalDownloadBytes.get()
         lastReportedUploadBytes = totalUploadBytes.get()
+        lastReportAtMs = System.currentTimeMillis()
 
         trafficJob = bridge.service.scope.launch {
             while (isActive) {
-                delay(TRAFFIC_REPORT_INTERVAL_MS)
+                delay(trafficReportIntervalMs())
 
                 val totalDownload = totalDownloadBytes.get()
                 val totalUpload = totalUploadBytes.get()
@@ -356,11 +394,18 @@ internal class IPTerminal(private val bridge: ClientBridge) {
                 lastReportedDownloadBytes = totalDownload
                 lastReportedUploadBytes = totalUpload
 
+                // Speeds are scaled by the interval that actually elapsed, so a
+                // stretched reporter (energy saving) still reports bytes per
+                // second instead of bytes per tick.
+                val now = System.currentTimeMillis()
+                val elapsedMs = (now - lastReportAtMs).coerceAtLeast(1L)
+                lastReportAtMs = now
+
                 // Kept in bits to preserve the existing display convention.
                 // Long arithmetic avoids the 32-bit overflow that used to
                 // truncate the cumulative total past ~268 MB.
-                val downloadBps = downloadDelta * 8
-                val uploadBps = uploadDelta * 8
+                val downloadBps = downloadDelta * 8 * 1000 / elapsedMs
+                val uploadBps = uploadDelta * 8 * 1000 / elapsedMs
                 val totalDownloadBits = totalDownload * 8
                 val totalUploadBits = totalUpload * 8
 
@@ -374,6 +419,17 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         }
     }
 
+    /**
+     * Traffic report cadence. Read on every tick so toggling the energy-saving
+     * switch takes effect without reconnecting.
+     */
+    private fun trafficReportIntervalMs(): Long =
+        if (getBooleanPrefValue(OscPrefKey.POWER_SAVING, bridge.prefs)) {
+            TRAFFIC_REPORT_INTERVAL_POWER_SAVE_MS
+        } else {
+            TRAFFIC_REPORT_INTERVAL_MS
+        }
+
     internal fun stopTrafficReporting() {
         trafficJob?.cancel()
         trafficJob = null
@@ -381,6 +437,7 @@ internal class IPTerminal(private val bridge: ClientBridge) {
 
     internal fun close() {
         stopTrafficReporting()
+        logSessionEnd()
         resetTrafficCounters()
         closeDescriptor()
     }

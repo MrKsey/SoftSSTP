@@ -970,6 +970,8 @@ softether_connection_t* softether_create(void) {
     conn->session_id = 0;
     conn->sequence_num = 0;
     conn->timeout_ms = 30000;  // Default 30 second timeout
+    conn->idle_poll_ms = 100;  // Default receive-loop idle wait
+
     conn->ssl_ctx = NULL;
     conn->ssl = NULL;
     

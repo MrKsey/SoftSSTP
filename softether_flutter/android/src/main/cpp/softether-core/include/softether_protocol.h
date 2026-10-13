@@ -167,6 +167,11 @@ typedef struct softether_connection {
     char password[256];
     char hub_name[256];  // Virtual Hub name (required for CONNECT)
     int timeout_ms;
+    // Idle wait of the receive loop, in ms. The app's energy-saving switch raises
+    // it so an idle tunnel wakes the CPU less often; poll() still returns at once
+    // when data arrives, so throughput is unaffected. Default 100.
+    int idle_poll_ms;
+
     // Server Hello data (from /vpnsvc/connect.cgi response)
     uint8_t server_random[20];  // 20-byte random from server Hello PACK
     int has_server_random;

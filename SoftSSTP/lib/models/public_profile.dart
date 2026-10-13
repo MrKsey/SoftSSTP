@@ -1,4 +1,4 @@
-import 'vpn_profile.dart';
+import 'vpn_protocol.dart';
 
 /// A public VPN Gate server that speaks MS-SSTP or SoftEther (SSL-VPN).
 class PublicProfile {
@@ -34,6 +34,31 @@ class PublicProfile {
     required this.countryName,
     required this.lineQuality,
   });
+
+  /// Serialises the entry for the bundled offline snapshot
+  /// (`assets/data/vpngate_servers.json`). Empty optional fields are left out so
+  /// the snapshot stays compact.
+  Map<String, dynamic> toJson() => {
+    'protocol': protocol,
+    'host': host,
+    'port': port,
+    if (udpPort != 0) 'udpPort': udpPort,
+    if (countryCode.isNotEmpty) 'countryCode': countryCode,
+    if (countryName.isNotEmpty) 'countryName': countryName,
+    if (lineQuality.isNotEmpty) 'lineQuality': lineQuality,
+  };
+
+  /// Reads an entry written by [toJson]. Missing fields fall back to the same
+  /// defaults as the constructor, so an older snapshot keeps working.
+  static PublicProfile fromJson(Map<String, dynamic> json) => PublicProfile(
+    protocol: (json['protocol'] as String?) ?? VpnProtocol.sstp,
+    host: (json['host'] as String?) ?? '',
+    port: (json['port'] as num?)?.toInt() ?? 443,
+    udpPort: (json['udpPort'] as num?)?.toInt() ?? 0,
+    countryCode: (json['countryCode'] as String?) ?? '',
+    countryName: (json['countryName'] as String?) ?? '',
+    lineQuality: (json['lineQuality'] as String?) ?? '',
+  );
 
   /// "host" or "host:port" depending on whether a custom port is used.
   String get displayHost => port == 443 ? host : '$host:$port';

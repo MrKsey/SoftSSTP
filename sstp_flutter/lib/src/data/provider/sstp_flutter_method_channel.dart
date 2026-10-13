@@ -213,6 +213,13 @@ class MethodChannelSstpFlutter {
         .invokeMethod("setConnectionLogging", {"enabled": enabled});
   }
 
+  /// Enables or disables the energy-saving mode (slower periodic cycles while
+  /// connected, so the app wakes the CPU less often).
+  Future<void> setPowerSaving({required bool enabled}) async {
+    await methodChannelCaller
+        .invokeMethod("setPowerSaving", {"enabled": enabled});
+  }
+
   /// Returns the in-memory connection log collected so far.
   Future<String> getConnectionLog() async {
     final log =
@@ -244,6 +251,14 @@ class MethodChannelSstpFlutter {
   Future<bool> requestIgnoreBatteryOptimizations() async {
     final result = await methodChannelCaller
         .invokeMethod("requestIgnoreBatteryOptimizations");
+    return result == true;
+  }
+
+  /// Opens the system list of battery-optimization exemptions, where the user
+  /// can remove the exemption for this app.
+  Future<bool> openBatteryOptimizationList() async {
+    final result =
+        await methodChannelCaller.invokeMethod("openBatteryOptimizationList");
     return result == true;
   }
 
