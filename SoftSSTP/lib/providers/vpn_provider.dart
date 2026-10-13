@@ -84,13 +84,22 @@ class VpnProvider extends ChangeNotifier {
   bool _useCustomSni = false;
   String _customSni = '';
   // SoftEther session options mirrored from the active profile (ignored for SSTP).
-  int _seTcpConnections = 4;
+  int _seTcpConnections = 2;
   int _seEstablishIntervalMs = 1000;
   bool _seEncrypt = true;
   bool _seDisableUdpAcceleration = true;
   int _seUdpPort = 0;
   bool _seDisableQos = false;
-  bool _connectionLogEnabled = true;
+
+  /// Connection logging. Off by default: the log is a diagnostics tool, so it
+  /// has to be switched on deliberately rather than run for every user.
+  bool _connectionLogEnabled = false;
+
+  /// Periodic (every 5 s) per-link traffic split in the native log. Off by
+  /// default — during an idle session the line repeats unchanged and buries the
+  /// rest of the log. The split written when a session ends or switches is
+  /// always recorded, so the distribution is never lost.
+  bool _perLinkStatsEnabled = false;
   String _externalIpBefore = '';
   String _externalIpAfter = '';
   String _beforeLocation = '';
@@ -264,6 +273,7 @@ class VpnProvider extends ChangeNotifier {
   int get seUdpPort => _seUdpPort;
   bool get seDisableQos => _seDisableQos;
   bool get connectionLogEnabled => _connectionLogEnabled;
+  bool get perLinkStatsEnabled => _perLinkStatsEnabled;
   String get externalIpBefore => _externalIpBefore;
   String get externalIpAfter => _externalIpAfter;
   String get beforeLocation => _beforeLocation;
@@ -692,7 +702,9 @@ class VpnProvider extends ChangeNotifier {
     notifyListeners();
 
     if (needsReconnect && _isTunnelActive) {
-      unawaited(_reconnect());
+      // previous holds the OLD profile (captured before _applyProfile), so the
+      // switch tears down the protocol that is actually up.
+      unawaited(_reconnect(previousProtocol: previous?.protocol));
     }
   }
 
@@ -835,6 +847,9 @@ class VpnProvider extends ChangeNotifier {
     final idx = _profiles.indexWhere((p) => p.id == id);
     if (idx < 0) return;
     final changed = id != _activeProfileId;
+    // Capture the live owner BEFORE _applyProfile rewrites _protocol, so the
+    // rebuild tears down the protocol that is actually up.
+    final previousProtocol = _tunnelProtocol ?? _protocol;
     _applyProfile(_profiles[idx]);
     await _persistProfiles();
     await _applyAppRoutingToNative();
@@ -843,7 +858,7 @@ class VpnProvider extends ChangeNotifier {
     if (changed && _status != VpnStatus.disconnected) {
       // Fire-and-forget: the picker closes immediately while the tunnel is
       // torn down and brought back up with the new profile's settings.
-      unawaited(_reconnect());
+      unawaited(_reconnect(previousProtocol: previousProtocol));
     }
   }
 
@@ -863,7 +878,8 @@ class VpnProvider extends ChangeNotifier {
     _sslVersion = prefs.getString('vpn_ssl_version') ?? 'AUTO';
     _useCustomSni = prefs.getBool('vpn_use_custom_sni') ?? false;
     _customSni = prefs.getString('vpn_custom_sni') ?? '';
-    _connectionLogEnabled = prefs.getBool('vpn_connection_log') ?? true;
+    _connectionLogEnabled = prefs.getBool('vpn_connection_log') ?? false;
+    _perLinkStatsEnabled = prefs.getBool('vpn_per_link_stats') ?? false;
     _pppMtu = prefs.getInt('vpn_ppp_mtu') ?? 1500;
     _pppMru = prefs.getInt('vpn_ppp_mru') ?? 1500;
     _authProtocol = prefs.getString('vpn_auth_protocol') ?? 'AUTO';
@@ -1195,24 +1211,79 @@ class VpnProvider extends ChangeNotifier {
   /// Tears the current tunnel down and brings it back up, preserving the
   /// configured settings. Used when a change only takes effect on a fresh
   /// connection (e.g. the app allowlist or a protocol switch).
-  Future<void> _reconnect() async {
-    // The tunnel that is up right now belongs to the recorded tunnel protocol
-    // (falls back to the active profile's protocol before the first connect).
-    final previous = _tunnelProtocol ?? _protocol;
+  Future<void> _reconnect({String? previousProtocol}) async {
+    // Which plugin owns the tunnel that is up right now. Prefer the caller's
+    // captured value (a protocol switch knows the OLD protocol), then the
+    // in-memory owner, then whatever the plugins actually report — the last is
+    // needed after an app restart, where _tunnelProtocol is null but a tunnel
+    // may still be live. Falling back to _protocol alone was wrong: by the time
+    // _reconnect runs, _applyProfile has already rewritten _protocol to the NEW
+    // protocol, so a SoftEther -> SSTP switch tore down SSTP (which was not up)
+    // and left the SoftEther tunnel running in parallel.
+    final previous =
+        previousProtocol ??
+        _tunnelProtocol ??
+        await _detectLiveTunnelProtocol() ??
+        _protocol;
+    // Point the owner at the protocol that is really up, so disconnect() and
+    // _waitUntilTunnelDown() target the correct service.
+    _tunnelProtocol = previous;
+    // Mark the change in the shared log: a reconnect is the one flow where the
+    // app tears a tunnel down and brings another one up, and the log had no
+    // trace of it, which made a reconnect loop impossible to read from the file
+    // alone. Only call it a protocol switch when the protocol actually changes —
+    // a settings change that also reconnects was logged as a switch, which sent
+    // the reader looking for a protocol change that never happened.
+    final switchingProtocol = previous != _protocol;
+    final what = switchingProtocol ? 'Protocol switch' : 'Reconnect';
+    await _logAppMessage(
+      switchingProtocol
+          ? '$what: tearing down $previous'
+          : '$what: settings changed, tearing down $previous',
+    );
     await disconnect();
     // Wait until the previous tunnel has actually released the VPN slot before
     // starting the new one. Its native teardown can outlast a fixed delay (up
     // to the connect timeout when a connect was still in flight), and starting
     // the new tunnel too early left two VPNs up at once — most visible when
     // switching a profile from SoftEther to SSTP.
-    await _waitUntilTunnelDown(previous);
+    final down = await _waitUntilTunnelDown(previous);
+    await _logAppMessage(
+      down
+          ? '$what: $previous released the VPN slot; starting $_protocol'
+          : '$what: $previous still active after timeout; starting $_protocol anyway',
+    );
     await connect();
+  }
+
+  /// Best-effort write to the shared connection log. Never throws.
+  Future<void> _logAppMessage(String message) async {
+    try {
+      await _sstpFlutter.logMessage(tag: 'APP', message: message);
+    } catch (_) {}
+  }
+
+  /// Returns the protocol of whichever native plugin currently owns a live
+  /// tunnel, or null when neither has one. The in-memory owner
+  /// ([_tunnelProtocol]) is lost when the app process restarts with a tunnel
+  /// already up, so the owner has to be recovered from the plugins themselves.
+  Future<String?> _detectLiveTunnelProtocol() async {
+    try {
+      final se = (await _softether.checkLastConnectionStatus()).toString();
+      if (_statusIsActive(se)) return VpnProtocol.softether;
+    } catch (_) {}
+    try {
+      final sstp = (await _sstpFlutter.checkLastConnectionStatus()).toString();
+      if (_statusIsActive(sstp)) return VpnProtocol.sstp;
+    } catch (_) {}
+    return null;
   }
 
   /// Polls the plugin that owned [protocol] until it reports no active tunnel,
   /// or a short deadline elapses. Lets [disconnect] return immediately while
   /// still guaranteeing the old service is down before the new one starts.
-  Future<void> _waitUntilTunnelDown(
+  /// Returns true when the plugin reports the tunnel is gone, false on timeout.
+  Future<bool> _waitUntilTunnelDown(
     String protocol, {
     int attempts = 40,
   }) async {
@@ -1222,11 +1293,24 @@ class VpnProvider extends ChangeNotifier {
         final status = protocol == VpnProtocol.softether
             ? await _softether.checkLastConnectionStatus()
             : await _sstpFlutter.checkLastConnectionStatus();
-        if (!_statusIsActive(status)) return;
+        if (_statusIsActive(status)) continue;
+        // The reported state is not enough on its own for SoftEther: it flips to
+        // "disconnected" the moment the teardown starts, while the teardown and
+        // the service stop still run on a background thread. A connect sent into
+        // that window landed on the instance that was about to die and was killed
+        // by its onDestroy right after starting, so enabling SSL on the active
+        // profile sometimes left the tunnel down until the profile was toggled.
+        // Wait for the instance itself to disappear.
+        if (protocol == VpnProtocol.softether &&
+            await _softether.isServiceRunning()) {
+          continue;
+        }
+        return true;
       } catch (_) {
-        return;
+        return true;
       }
     }
+    return false;
   }
 
   /// True while a plugin state string means a tunnel is up or coming up.
@@ -1532,6 +1616,7 @@ class VpnProvider extends ChangeNotifier {
     );
     // Make sure the native side knows whether to persist the log.
     await _softether.setConnectionLogging(enabled: _connectionLogEnabled);
+    await _softether.setPerLinkStats(enabled: _perLinkStatsEnabled);
     await _softether.connect(server: server);
   }
 
@@ -1599,6 +1684,11 @@ class VpnProvider extends ChangeNotifier {
   /// returns to the foreground, so the UI matches the actual tunnel/notification
   /// state instead of the (possibly stale) in-memory status.
   Future<void> syncStatus() async {
+    // Recover the tunnel owner first: after an app restart _tunnelProtocol is
+    // null, so a live tunnel belonging to the other plugin would otherwise be
+    // attributed to the active profile's protocol — and a later protocol switch
+    // would then tear down the wrong service while the real one kept running.
+    _tunnelProtocol = await _detectLiveTunnelProtocol();
     final status = await checkLastConnectionStatus();
     switch (status) {
       case 'Connected':
@@ -1615,10 +1705,25 @@ class VpnProvider extends ChangeNotifier {
         _internalIp = '';
         _externalIpAfter = '';
         _afterLocation = '';
+        _softetherConnectedAt = null;
     }
     notifyListeners();
 
     if (_status == VpnStatus.connected) {
+      // Re-anchor the SoftEther uptime timer to the native service's clock. The
+      // Dart anchor lives in memory and is lost when the Activity is recreated
+      // (backgrounding the app), which made Connection Stats read 00:00:00 on
+      // return. The service keeps counting, so rebuild the anchor from it.
+      if (_isSoftetherTunnel) {
+        try {
+          final uptime = await _softether.getConnectionUptime();
+          if (uptime > Duration.zero) {
+            _softetherConnectedAt = DateTime.now().subtract(uptime);
+            _connectionDuration = uptime;
+            notifyListeners();
+          }
+        } catch (_) {}
+      }
       if (_internalIp.isEmpty) {
         try {
           final ip = await (_isSoftetherTunnel
@@ -1855,13 +1960,26 @@ class VpnProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Pushes the current logging preference to both native plugins.
+  /// Persists the periodic per-link statistics preference. Only the SoftEther
+  /// plugin has the notion of multiple TCP links, so the SSTP side is untouched.
+  Future<void> savePerLinkStats(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    _perLinkStatsEnabled = enabled;
+    await prefs.setBool('vpn_per_link_stats', enabled);
+    await _applyConnectionLogging();
+    notifyListeners();
+  }
+
+  /// Pushes the current logging preferences to the native plugins.
   Future<void> _applyConnectionLogging() async {
     try {
       await _sstpFlutter.setConnectionLogging(enabled: _connectionLogEnabled);
     } catch (_) {}
     try {
       await _softether.setConnectionLogging(enabled: _connectionLogEnabled);
+    } catch (_) {}
+    try {
+      await _softether.setPerLinkStats(enabled: _perLinkStatsEnabled);
     } catch (_) {}
   }
 

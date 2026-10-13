@@ -206,6 +206,10 @@ class _PublicProfilesScreenState extends State<PublicProfilesScreen> {
       username: 'vpn',
       password: 'vpn',
       seUdpPort: server.udpPort,
+      // VPN Gate relays drop extra TCP links (and sometimes the whole session
+      // when several are forced), so start public profiles with a single
+      // connection. The editor still allows raising it to 8 for fast servers.
+      seTcpConnections: 1,
     );
 
     await provider.addProfile(profile);

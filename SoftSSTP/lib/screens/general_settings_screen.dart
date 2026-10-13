@@ -60,7 +60,8 @@ class GeneralSettingsScreen extends StatefulWidget {
 class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
     with WidgetsBindingObserver {
   AppInfo? _appInfo;
-  bool _connectionLogEnabled = true;
+  bool _connectionLogEnabled = false;
+  bool _perLinkStatsEnabled = false;
   bool _ignoringBatteryOptimizations = false;
 
   @override
@@ -69,6 +70,7 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
     WidgetsBinding.instance.addObserver(this);
     _loadAppInfo();
     _connectionLogEnabled = context.read<VpnProvider>().connectionLogEnabled;
+    _perLinkStatsEnabled = context.read<VpnProvider>().perLinkStatsEnabled;
     _loadBatteryOptimizationStatus();
   }
 
@@ -244,9 +246,9 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
       setState(() {});
     } on FormatException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -612,6 +614,44 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
             ],
           ),
           Divider(color: AppTheme.dividerColor, height: 24),
+          Row(
+            children: [
+              Icon(Icons.call_split_outlined, color: AppTheme.primaryColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Per-link statistics',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Log the traffic split across TCP links every 5 s '
+                      '(the split at session end is always logged)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _perLinkStatsEnabled,
+                onChanged: (value) {
+                  setState(() => _perLinkStatsEnabled = value);
+                  provider.savePerLinkStats(value);
+                },
+              ),
+            ],
+          ),
+          Divider(color: AppTheme.dividerColor, height: 24),
           InkWell(
             onTap: () {
               Navigator.push(
@@ -624,7 +664,10 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
               padding: EdgeInsets.symmetric(vertical: 8),
               child: Row(
                 children: [
-                  Icon(Icons.description_outlined, color: AppTheme.primaryColor),
+                  Icon(
+                    Icons.description_outlined,
+                    color: AppTheme.primaryColor,
+                  ),
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
@@ -768,7 +811,7 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                       exempt
                           ? 'Exempt — the VPN keeps running with the screen off'
                           : 'Not exempt — Android may stop the VPN in the '
-                              'background',
+                                'background',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppTheme.textSecondary,
@@ -885,11 +928,7 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                 ],
               ),
             ),
-            Icon(
-              Icons.open_in_new,
-              size: 18,
-              color: AppTheme.textSecondary,
-            ),
+            Icon(Icons.open_in_new, size: 18, color: AppTheme.textSecondary),
           ],
         ),
       ),

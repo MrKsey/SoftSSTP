@@ -162,7 +162,7 @@ class VpnProfile {
     this.sslVersion = 'AUTO',
     this.useCustomSni = false,
     this.customSni = '',
-    this.seTcpConnections = 4,
+    this.seTcpConnections = 2,
     this.seEstablishIntervalMs = 1000,
     this.seEncrypt = true,
     this.seDisableUdpAcceleration = true,
@@ -320,7 +320,7 @@ class VpnProfile {
       sslVersion: (json['sslVersion'] ?? 'AUTO') as String,
       useCustomSni: (json['useCustomSni'] as bool?) ?? false,
       customSni: (json['customSni'] ?? '') as String,
-      seTcpConnections: (json['seTcpConnections'] as num?)?.toInt() ?? 4,
+      seTcpConnections: (json['seTcpConnections'] as num?)?.toInt() ?? 2,
       seEstablishIntervalMs:
           (json['seEstablishIntervalMs'] as num?)?.toInt() ?? 1000,
       seEncrypt: (json['seEncrypt'] as bool?) ?? true,

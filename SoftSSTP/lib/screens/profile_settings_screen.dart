@@ -875,7 +875,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'Number of TCP connections (1-8)',
-                    hintText: '4',
+                    hintText: '2',
                   ),
                   validator: (value) {
                     final n = int.tryParse((value ?? '').trim());
@@ -891,7 +891,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 'How many parallel TCP connections the client may open (1-8). '
                     'More connections can raise throughput on fast links but '
                     'cost battery. The server may allow fewer; the connection '
-                    'log shows how many are actually up. Default 4.',
+                    'log shows how many are actually up. Default 2.',
               ),
             ],
           ),
@@ -1644,7 +1644,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         'How many parallel TCP connections the client may open (1-8). More '
             'connections can raise throughput on fast links but cost battery. '
             'The server may allow fewer; the connection log shows how many are '
-            'actually up. Default 4.',
+            'actually up. Default 2.',
       ),
       (
         'Establishing interval',
@@ -1864,7 +1864,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       sslVersion: _sslVersion,
       useCustomSni: _useCustomSni,
       customSni: _sniController.text.trim(),
-      seTcpConnections: int.tryParse(_seTcpConnectionsController.text) ?? 4,
+      seTcpConnections: int.tryParse(_seTcpConnectionsController.text) ?? 2,
       seEstablishIntervalMs: int.tryParse(_seIntervalController.text) ?? 1000,
       seEncrypt: _seEncrypt,
       seDisableUdpAcceleration: _seDisableUdpAcceleration,
