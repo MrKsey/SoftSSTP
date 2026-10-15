@@ -22,8 +22,6 @@ Builds:
       - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    binary: 
-      https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-armeabi-v7a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -82,8 +80,6 @@ Builds:
       - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    binary: 
-      https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-arm64-v8a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -133,30 +129,27 @@ Builds:
       - cd $orig/SoftSSTP
     ndk: 28.2.13676358
 
-AllowedAPKSigningKeys: e755a91d46c619714a10b54e2f8b91eac71a92a4bf1be92d462701aadf2788c1
-
 MaintainerNotes: |-
   Version name and code come from SoftSSTP/pubspec.yaml (the number after "+").
   Every release bumps both and is tagged vX.Y.Z; the tag must match the pubspec
   version. Split APKs use versionCode * 10 + slot (armeabi-v7a = 1,
   arm64-v8a = 2), mirrored in VercodeOperation and in build.gradle.kts.
-  The build is reproducible against the GitHub release, so the APKs published
-  here are the upstream ones, signed with the maintainer's key
-  (AllowedAPKSigningKeys). The release workflow builds the split APKs and
-  uploads them as SoftSSTP-<version>-<abi>.apk, which is what `binary` points
-  at. Two things keep the two builds identical: the release APK is built from
-  the same pubspec version, Flutter version and NDK, and the source carries no
-  F-Droid-only switches any more (the in-app updater is gone, see below).
-  Three details keep the native libraries identical as well. OpenSSL is built
-  with a fixed prefix, because OPENSSLDIR, ENGINESDIR and MODULESDIR are compiled
-  into libcrypto and the build directory would otherwise leak into .rodata. Its
-  build date is pinned through SOURCE_DATE_EPOCH (the OpenSSL submodule commit
-  date), for the same reason. And the linker build-id is dropped, since it hashes
-  the debug info, which records the NDK path. Both builders also keep the pub
-  cache at the same absolute path: the path to the Dart sources ends up in
-  libdartjni.so and in its build-id.
-  The build path matters, so prebuild and build move the whole checkout to
-  /home/runner/work/SoftSSTP/SoftSSTP, the path actions/checkout uses on the
+  F-Droid builds the APK from source and signs it with its own key. The build is
+  not bit-for-bit reproducible against the GitHub release: the two toolchains
+  emit the same strings in libsoftether.so but in a different order, which moves
+  a 107 KB block inside .rodata, so the APK comparison that runs for a recipe
+  with a `binary` entry never settles. That is why there is no `binary` entry and
+  no AllowedAPKSigningKeys here. The upstream APK is signed with the maintainer's
+  key and will not install over an F-Droid build; switching between the two needs
+  a reinstall.
+  The native libraries are still built deterministically, which keeps rebuilds
+  comparable over time. OpenSSL is built with a fixed prefix, because OPENSSLDIR,
+  ENGINESDIR and MODULESDIR are compiled into libcrypto and the build directory
+  would otherwise leak into .rodata, and its build date is pinned through
+  SOURCE_DATE_EPOCH (the OpenSSL submodule commit date). The linker build-id is
+  dropped, since it hashes the debug info, which records the NDK path. The build
+  path matters for the same reason, so prebuild and build move the whole checkout
+  to /home/runner/work/SoftSSTP/SoftSSTP, the path actions/checkout uses on the
   GitHub runner. The whole tree moves, not just the Flutter project: pubspec.yaml
   pulls softether_flutter and sstp_flutter in as path dependencies from the
   repository root, and Dart records their absolute paths, so the layout has to
@@ -180,9 +173,8 @@ MaintainerNotes: |-
   the GitHub and the F-Droid build produce an APK without it.
   The app checks the GitHub release page for a newer version and opens that page
   in the browser. It does not download or install APKs itself: the
-  REQUEST_INSTALL_PACKAGES permission and the FileProvider are gone, because
-  F-Droid does not allow an app to install its own APKs and because a build-time
-  switch for it would break the reproducible build.
+  REQUEST_INSTALL_PACKAGES permission and the FileProvider are gone: F-Droid
+  does not allow an app to install its own APKs.
   The app contacts non-free network services for optional features: the VPN Gate
   public server list (vpngate.net) and IP geolocation providers (ipwho.is,
   ipapi.co, ip-api.com, api.ipify.org, icanhazip.com). The tunnel itself works

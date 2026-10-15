@@ -89,8 +89,9 @@ Every release is signed with the same certificate, so updates install over the
 previous version without uninstalling.
 
 An F-Droid listing is under review; the build recipe lives in `fdroid/` and the
-release notes in `fastlane/metadata/android`. The F-Droid build is reproducible,
-so F-Droid ships the APKs from this page instead of a rebuild of its own.
+release notes in `fastlane/metadata/android`. F-Droid builds and signs its own
+APK from the same source, so its signature differs from the one on this page and
+installing it over the release APK needs an uninstall first.
 
 ## Usage
 
@@ -262,13 +263,15 @@ source and no prebuilt `.so` files are committed, so the recipe pins the submodu
 the NDK. Each architecture gets its own build entry with a version code from
 `VercodeOperation`.
 
-The build is reproducible. The recipe follows `templates/build-flutter.yml`, moves the
-checkout to the path the GitHub runner uses, and points `binary` at the APK of the
-matching release. F-Droid therefore publishes the APK from the releases page, signed
-with the maintainer's key, which `AllowedAPKSigningKeys` pins down. Nothing in the build
-switches the app between channels: the in-app updater and its
-`REQUEST_INSTALL_PACKAGES` permission are gone from the source, so one APK serves both
-GitHub and F-Droid.
+F-Droid builds the APK from source and signs it with its own key. The recipe follows
+`templates/build-flutter.yml` and pins the OpenSSL submodule and the NDK, and each
+architecture gets its own build entry. The native libraries are built deterministically,
+but the build is not bit-for-bit reproducible against the release APK: the two toolchains
+put the OpenSSL strings in `libsoftether.so` in a different order. That is why the recipe
+carries no `binary` entry and no `AllowedAPKSigningKeys`, and why the F-Droid APK is
+signed differently from the one on the releases page. Nothing in the build switches the
+app between channels: the in-app updater and its `REQUEST_INSTALL_PACKAGES` permission
+are gone from the source.
 
 ## Donate
 
