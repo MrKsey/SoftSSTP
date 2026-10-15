@@ -111,8 +111,10 @@ build_openssl() {
     # Pin the timestamp that mkbuildinf.pl bakes into libcrypto. Without it the
     # "built on: ..." string changes on every build, which has the same effect
     # on .rodata. The OpenSSL submodule commit is the same in both builds, so
-    # its date is a stable, meaningful choice.
-    export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$OPENSSL_DIR" log -1 --format=%ct 2>/dev/null || echo 0)}"
+    # its date is a stable, meaningful choice. An inherited SOURCE_DATE_EPOCH
+    # must not win here: fdroidserver exports the app commit date while GitHub
+    # Actions exports nothing, and the two builds would disagree.
+    export SOURCE_DATE_EPOCH="$(git -C "$OPENSSL_DIR" log -1 --format=%ct 2>/dev/null || echo 0)"
     
     # Drop any previous install output so a failed run cannot leave stale
     # headers/objects behind for the next one.
