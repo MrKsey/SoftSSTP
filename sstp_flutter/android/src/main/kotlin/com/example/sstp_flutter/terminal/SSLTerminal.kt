@@ -38,6 +38,14 @@ private const val HTTP_SUFFIX = "\r\n\r\n"
 
 internal const val SSL_REQUEST_INTERVAL = 10_000L
 
+// Socket read timeout of the idle read loop. With the screen on the loop has to
+// come back quickly so the UI stays responsive (and the 1 s tick is what keeps
+// the SSTP/PPP echo timers on schedule). With the screen off nothing is visible,
+// so the loop is allowed to block far longer: the same echo checks still run on
+// every wake-up, and the deadline (2 x 20 s) stays comfortably inside them.
+private const val READ_TIMEOUT_SCREEN_ON_MS = 1_000
+private const val READ_TIMEOUT_SCREEN_OFF_MS = 10_000
+
 internal class SSLTerminal(private val bridge: ClientBridge) {
     private val mutex = Mutex()
 
@@ -53,6 +61,13 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
 
     private var loggedClientHello = false
     private var loggedServerData = false
+
+    // Current socket read timeout, kept screen-aware (see onScreenStateChanged).
+    // Seeded from the screen state at construction so a tunnel started with the
+    // screen already off gets the relaxed timeout from the first read.
+    @Volatile
+    private var readTimeoutMs: Int =
+        if (bridge.service.isScreenInteractive) READ_TIMEOUT_SCREEN_ON_MS else READ_TIMEOUT_SCREEN_OFF_MS
 
     private val doUseProxy = getBooleanPrefValue(OscPrefKey.PROXY_DO_USE_PROXY, bridge.prefs)
     private val sslHostname = getStringPrefValue(OscPrefKey.HOME_HOSTNAME, bridge.prefs)
@@ -346,9 +361,24 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
         }
 
         ConnectionLog.append("SSL", "SSTP HTTP 200 OK: ${response.split(HTTP_DELIMITER)[0]}")
-        socket!!.soTimeout = 1_000
+        socket!!.soTimeout = readTimeoutMs
         bridge.service.protect(socket)
         return true
+    }
+
+    /**
+     * Applies a new socket read timeout when the screen turns on or off. The read
+     * already in flight keeps the old timeout, so the change takes effect on the
+     * next idle wake-up.
+     */
+    internal fun onScreenStateChanged(interactive: Boolean) {
+        val timeout = if (interactive) READ_TIMEOUT_SCREEN_ON_MS else READ_TIMEOUT_SCREEN_OFF_MS
+        readTimeoutMs = timeout
+        try {
+            socket?.soTimeout = timeout
+        } catch (_: Exception) {
+            // A socket that is already closing must not break the transition.
+        }
     }
 
     internal fun getSession(): SSLSession {

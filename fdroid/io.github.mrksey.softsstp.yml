@@ -1,21 +1,11 @@
-# F-Droid build recipe for SoftSSTP.
-#
-# This file does NOT belong in the app repository. It has to be copied into the
-# fdroiddata repository (https://gitlab.com/fdroid/fdroiddata) as
-# metadata/io.github.mrksey.softsstp.yml, then submitted as a merge request.
-# It is kept here as the source of truth so it can be updated with each release.
-#
-# Before submitting: release the version below (push the matching vX.Y.Z tag)
-# and, ideally, replace `commit` with that tag's full commit hash.
-
 Categories:
-  - Internet
+  - VPN & Proxy
 License: GPL-3.0-only
 AuthorName: MrKsey
 SourceCode: https://github.com/MrKsey/SoftSSTP
 IssueTracker: https://github.com/MrKsey/SoftSSTP/issues
 Changelog: https://github.com/MrKsey/SoftSSTP/releases
-Donate: bitcoin:bc1qdf9wryj6tnyyr7ed4dkfv03nn0dxjf27xshfcr
+Bitcoin: bc1qdf9wryj6tnyyr7ed4dkfv03nn0dxjf27xshfcr
 
 AutoName: SoftSSTP
 
@@ -23,17 +13,16 @@ RepoType: git
 Repo: https://github.com/MrKsey/SoftSSTP.git
 
 Builds:
-  - versionName: 1.0.0
-    versionCode: 11
-    commit: v1.0.0
+  - versionName: 1.6.0
+    versionCode: 121
+    commit: v1.6.0
     subdir: SoftSSTP
-    # The SoftEther plugin cross-compiles OpenSSL from the pinned git submodule
-    # (F-Droid forbids shipping prebuilt native binaries), so the submodule has
-    # to be checked out during the build.
     submodules: true
-    # Matches the ndkVersion pinned in softether_flutter/android/build.gradle.
-    ndk: 28.2.13676358
+    sudo:
+      - mkdir -p /home/runner/work/SoftSSTP/SoftSSTP
+      - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+    binary: https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-armeabi-v7a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -42,30 +31,58 @@ Builds:
       - SoftSSTP/macos
       - SoftSSTP/web
       - SoftSSTP/windows
+      - softether_flutter/android/src/main/cpp/openssl/fuzz/corpora
+      - softether_flutter/android/src/main/cpp/openssl/cloudflare-quiche
+      - softether_flutter/android/src/main/cpp/openssl/pkcs11-provider
+      - softether_flutter/android/src/main/cpp/openssl/tlsfuzzer
+      - softether_flutter/android/src/main/cpp/openssl/tlslite-ng
+      - softether_flutter/android/src/main/cpp/openssl/gost-engine
+      - softether_flutter/android/src/main/cpp/openssl/wycheproof
+      - softether_flutter/android/src/main/cpp/openssl/pyca-cryptography
+      - softether_flutter/android/src/main/cpp/openssl/python-ecdsa
+      - softether_flutter/android/src/main/cpp/openssl/krb5
+      - softether_flutter/android/src/main/cpp/openssl/oqs-provider
     prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s*'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
+      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s'(.*)'/\1/p" ../.github/workflows/release.yml)
+      - '[[ $flutterVersion ]]'
       - git -C $$flutter$$ checkout -f $flutterVersion
+      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - cd ..
+      - mv SoftSSTP $repo
+      - pushd $repo
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
+      - $$flutter$$/bin/flutter pub get --enforce-lockfile
+      - popd
+      - mv $repo SoftSSTP
+    scanignore:
+      - softether_flutter/pubspec.yaml
+      - sstp_flutter/pubspec.yaml
     scandelete:
       - SoftSSTP/.pub-cache
     build:
+      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - cd ..
+      - mv SoftSSTP $repo
+      - pushd $repo
       - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.0.0
-    versionCode: 12
-    commit: v1.0.0
-    subdir: SoftSSTP
-    # The SoftEther plugin cross-compiles OpenSSL from the pinned git submodule
-    # (F-Droid forbids shipping prebuilt native binaries), so the submodule has
-    # to be checked out during the build.
-    submodules: true
-    # Matches the ndkVersion pinned in softether_flutter/android/build.gradle.
+      - export PATH=$$NDK$$/prebuilt/linux-x86_64/bin:$PATH
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi
+        --target-platform=android-arm
+      - popd
+      - mv $repo SoftSSTP
     ndk: 28.2.13676358
+
+  - versionName: 1.6.0
+    versionCode: 122
+    commit: v1.6.0
+    subdir: SoftSSTP
+    submodules: true
+    sudo:
+      - mkdir -p /home/runner/work/SoftSSTP/SoftSSTP
+      - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+    binary: https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-arm64-v8a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -74,608 +91,97 @@ Builds:
       - SoftSSTP/macos
       - SoftSSTP/web
       - SoftSSTP/windows
+      - softether_flutter/android/src/main/cpp/openssl/fuzz/corpora
+      - softether_flutter/android/src/main/cpp/openssl/cloudflare-quiche
+      - softether_flutter/android/src/main/cpp/openssl/pkcs11-provider
+      - softether_flutter/android/src/main/cpp/openssl/tlsfuzzer
+      - softether_flutter/android/src/main/cpp/openssl/tlslite-ng
+      - softether_flutter/android/src/main/cpp/openssl/gost-engine
+      - softether_flutter/android/src/main/cpp/openssl/wycheproof
+      - softether_flutter/android/src/main/cpp/openssl/pyca-cryptography
+      - softether_flutter/android/src/main/cpp/openssl/python-ecdsa
+      - softether_flutter/android/src/main/cpp/openssl/krb5
+      - softether_flutter/android/src/main/cpp/openssl/oqs-provider
     prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s*'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
+      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s'(.*)'/\1/p" ../.github/workflows/release.yml)
+      - '[[ $flutterVersion ]]'
       - git -C $$flutter$$ checkout -f $flutterVersion
+      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - cd ..
+      - mv SoftSSTP $repo
+      - pushd $repo
       - export PUB_CACHE=$(pwd)/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
+      - $$flutter$$/bin/flutter pub get --enforce-lockfile
+      - popd
+      - mv $repo SoftSSTP
+    scanignore:
+      - softether_flutter/pubspec.yaml
+      - sstp_flutter/pubspec.yaml
     scandelete:
       - SoftSSTP/.pub-cache
     build:
+      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - cd ..
+      - mv SoftSSTP $repo
+      - pushd $repo
       - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.2.0
-    versionCode: 21
-    commit: v1.2.0
-    subdir: SoftSSTP
-    # The SoftEther plugin cross-compiles OpenSSL from the pinned git submodule
-    # (F-Droid forbids shipping prebuilt native binaries), so the submodule has
-    # to be checked out during the build.
-    submodules: true
-    # Matches the ndkVersion pinned in softether_flutter/android/build.gradle.
+      - export PATH=$$NDK$$/prebuilt/linux-x86_64/bin:$PATH
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi
+        --target-platform=android-arm64
+      - popd
+      - mv $repo SoftSSTP
     ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
 
-  - versionName: 1.2.0
-    versionCode: 22
-    commit: v1.2.0
-    subdir: SoftSSTP
-    # The SoftEther plugin cross-compiles OpenSSL from the pinned git submodule
-    # (F-Droid forbids shipping prebuilt native binaries), so the submodule has
-    # to be checked out during the build.
-    submodules: true
-    # Matches the ndkVersion pinned in softether_flutter/android/build.gradle.
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.2.1
-    versionCode: 31
-    commit: v1.2.1
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.2.1
-    versionCode: 32
-    commit: v1.2.1
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.2.2
-    versionCode: 41
-    commit: v1.2.2
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.2.2
-    versionCode: 42
-    commit: v1.2.2
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.3.0
-    versionCode: 51
-    commit: v1.3.0
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.3.0
-    versionCode: 52
-    commit: v1.3.0
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.3.1
-    versionCode: 61
-    commit: v1.3.1
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.3.1
-    versionCode: 62
-    commit: v1.3.1
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.3.2
-    versionCode: 71
-    commit: v1.3.2
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.3.2
-    versionCode: 72
-    commit: v1.3.2
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.3.3
-    versionCode: 81
-    commit: v1.3.3
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.3.3
-    versionCode: 82
-    commit: v1.3.3
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.3.4
-    versionCode: 91
-    commit: v1.3.4
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.3.4
-    versionCode: 92
-    commit: v1.3.4
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.4.0
-    versionCode: 101
-    commit: v1.4.0
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.4.0
-    versionCode: 102
-    commit: v1.4.0
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-  - versionName: 1.5.0
-    versionCode: 111
-    commit: v1.5.0
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm
-
-  - versionName: 1.5.0
-    versionCode: 112
-    commit: v1.5.0
-    subdir: SoftSSTP
-    submodules: true
-    ndk: 28.2.13676358
-    output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    srclibs:
-      - flutter@stable
-    rm:
-      - SoftSSTP/ios
-      - SoftSSTP/linux
-      - SoftSSTP/macos
-      - SoftSSTP/web
-      - SoftSSTP/windows
-    prebuild:
-      - flutterVersion=$(sed -n -E "s/.*flutter-version:\s+'(.*)'/\1/p" ../.github/workflows/release.yml)
-      - test -n "$flutterVersion"
-      - git -C $$flutter$$ checkout -f $flutterVersion
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter config --no-analytics
-      - $$flutter$$/bin/flutter pub get
-    scandelete:
-      - SoftSSTP/.pub-cache
-    build:
-      - export PUB_CACHE=$(pwd)/.pub-cache
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi --dart-define=FDROID=true --target-platform=android-arm64
-
-AutoUpdateMode: Version
-UpdateCheckMode: Tags
-# The version code and name live in SoftSSTP/pubspec.yaml, e.g. "1.3.3+8".
-UpdateCheckData: SoftSSTP/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
-# Each ABI gets versionCode * 10 + slot (arm = 1, arm64 = 2). The same slot
-# numbers are set in SoftSSTP/android/app/build.gradle.kts.
-VercodeOperation:
-  - '%c * 10 + 1'
-  - '%c * 10 + 2'
-CurrentVersion: '1.5.0'
-CurrentVersionCode: 112
-
-MaintainerNotes: |
+MaintainerNotes: |-
   Version name and code come from SoftSSTP/pubspec.yaml (the number after "+").
   Every release bumps both and is tagged vX.Y.Z; the tag must match the pubspec
   version. Split APKs use versionCode * 10 + slot (armeabi-v7a = 1,
   arm64-v8a = 2), mirrored in VercodeOperation and in build.gradle.kts.
+  The build is reproducible against the GitHub release, so the APKs published
+  here are the upstream ones, signed with the maintainer's key
+  (AllowedAPKSigningKeys). The release workflow builds the split APKs and
+  uploads them as SoftSSTP-<version>-<abi>.apk, which is what `binary` points
+  at. Two things keep the two builds identical: the release APK is built from
+  the same pubspec version, Flutter version and NDK, and the source carries no
+  F-Droid-only switches any more (the in-app updater is gone, see below).
+  The build path matters, so prebuild and build move the checkout to
+  /home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP, the path the GitHub runner uses
+  (actions/checkout puts the repository at /home/runner/work/<repo>/<repo> and
+  the Flutter project lives in its SoftSSTP subdirectory).
   The SoftEther plugin builds OpenSSL (pinned submodule) from source during the
-  Gradle build, so the buildserver needs bash, perl and make (all present) and
-  the NDK above. No prebuilt .so/.a files are committed.
-  Every build passes --dart-define=FDROID=true, which hides the in-app updater:
-  F-Droid does not allow an app to install its own APKs. Builds from GitHub
-  releases leave the flag unset and keep the Update section.
-  No reproducible build: the app is signed with F-Droid's key.
+  Gradle build, so the buildserver needs bash and perl (both present) plus GNU
+  make. make is added to PATH from the NDK's own prebuilt bin, since the
+  fdroiddata CI image does not ship one. No prebuilt .so/.a files are committed.
+  OpenSSL's nested submodules (fuzz corpora, cloudflare-quiche, the provider and
+  tls test data) are removed via rm before the scan: they are unused test data
+  that the binary scanner would otherwise report. Only fuzz/corpora is dropped,
+  not fuzz/ itself, so fuzz/build.info stays for OpenSSL's build system.
+  softether_flutter and sstp_flutter are in-tree Flutter plugin packages whose
+  pubspec.lock files are generated artifacts not tracked upstream, so their
+  pubspec.yaml files are excluded from the dependency-lock check.
+  android/app/build.gradle.kts turns off AGP's dependenciesInfo: without it AGP
+  8.5+ embeds a Play 'Dependency metadata' block in the APK signing block, which
+  the F-Droid scanner rejects as an extra signing block. AGP exposes no Gradle
+  property for this, so the DSL block lives in the build script itself, and both
+  the GitHub and the F-Droid build produce an APK without it.
+  The app checks the GitHub release page for a newer version and opens that page
+  in the browser. It does not download or install APKs itself: the
+  REQUEST_INSTALL_PACKAGES permission and the FileProvider are gone, because
+  F-Droid does not allow an app to install its own APKs and because a build-time
+  switch for it would break the reproducible build.
+  The app contacts non-free network services for optional features: the VPN Gate
+  public server list (vpngate.net) and IP geolocation providers (ipwho.is,
+  ipapi.co, ip-api.com, api.ipify.org, icanhazip.com). The tunnel itself works
+  with any user-supplied SSTP or SoftEther server and does not depend on them.
+
+AllowedAPKSigningKeys: e755a91d46c619714a10b54e2f8b91eac71a92a4bf1be92d462701aadf2788c1
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+VercodeOperation:
+  - '%c * 10 + 1'
+  - '%c * 10 + 2'
+UpdateCheckData: SoftSSTP/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
+CurrentVersion: 1.6.0
+CurrentVersionCode: 122

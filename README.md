@@ -61,6 +61,10 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
   hostname and certificate verification, MTU/MRU, auth protocol, IPv4/IPv6, static
   IP and routing.
 - Traffic counters that survive screen-off and app recreation.
+- Power saving while the screen is off: the per-second traffic updates, the
+  notification redraws and the socket polling stop, and the CPU sleeps between
+  keepalives and real traffic. The Energy saving switch in Settings stretches
+  the same cycles with the screen on too.
 - Connection diagnostics. Both protocols write to one file,
   `Android/data/io.github.mrksey.softsstp/files/connection_log.txt`, and the
   View connection log screen shows it inside the app. Logging is off by default and
@@ -84,8 +88,9 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
 Every release is signed with the same certificate, so updates install over the
 previous version without uninstalling.
 
-An F-Droid listing is being prepared; the build recipe lives in `fdroid/` and the
-release notes in `fastlane/metadata/android`.
+An F-Droid listing is under review; the build recipe lives in `fdroid/` and the
+release notes in `fastlane/metadata/android`. The F-Droid build is reproducible,
+so F-Droid ships the APKs from this page instead of a rebuild of its own.
 
 ## Usage
 
@@ -114,14 +119,18 @@ The Settings screen is made of blocks.
 - Diagnostics: the Connection logging switch, the Per-link statistics switch and the
   View connection log entry.
 - Background: the system battery-optimization exemption and the Energy saving switch.
-  Without the exemption Android may stop the VPN in the background. Energy saving makes
-  the app wake the CPU less often while a tunnel is idle, so the status and speed
-  refresh slower; the traffic speed itself is unaffected. It is off by default and can
-  be turned off again during tests.
+  Without the exemption Android may stop the VPN in the background. The app already
+  saves power on its own: while the screen is off it stops the per-second traffic
+  updates, stops redrawing the notification, relaxes the socket polling and lets the
+  CPU suspend, waking it only for keepalives and real traffic (the same way
+  shadowsocks-android behaves). Energy saving is an extra switch on top of that: it
+  also stretches those cycles while the screen is on, so the status and speed refresh
+  slower; the traffic speed itself is unaffected. It is off by default and can be
+  turned off again during tests.
 - Update: a switch for the automatic check at startup, a Check now entry and, when a
-  newer release exists, a Download entry that fetches the APK for this device and opens
-  the system installer. Android asks once for permission to install apps. The whole
-  block is hidden in the F-Droid build, which does not allow an app to update itself.
+  newer release exists, an entry that opens the release page in the browser. The app
+  reads the GitHub releases only; it does not download or install APKs itself, so it
+  asks for no permission to install apps and the same build works on F-Droid.
 - Donate and About: donation wallets and links to the project.
 
 A profile opens on tap and has its own blocks.
@@ -251,8 +260,15 @@ The build recipe lives in `fdroid/io.github.mrksey.softsstp.yml` and the release
 for F-Droid in `fastlane/metadata/android`. The SoftEther plugin builds OpenSSL from
 source and no prebuilt `.so` files are committed, so the recipe pins the submodule and
 the NDK. Each architecture gets its own build entry with a version code from
-`VercodeOperation`. Every F-Droid build passes `--dart-define=FDROID=true`, which hides
-the Update block, since F-Droid does not allow an app to install its own APKs.
+`VercodeOperation`.
+
+The build is reproducible. The recipe follows `templates/build-flutter.yml`, moves the
+checkout to the path the GitHub runner uses, and points `binary` at the APK of the
+matching release. F-Droid therefore publishes the APK from the releases page, signed
+with the maintainer's key, which `AllowedAPKSigningKeys` pins down. Nothing in the build
+switches the app between channels: the in-app updater and its
+`REQUEST_INSTALL_PACKAGES` permission are gone from the source, so one APK serves both
+GitHub and F-Droid.
 
 ## Donate
 

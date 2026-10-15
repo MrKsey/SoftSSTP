@@ -66,6 +66,10 @@ import java.util.Locale
 
 internal const val ACTION_VPN_CONNECT = "com.example.sstp_flutter.connect"
 internal const val ACTION_VPN_DISCONNECT = "com.example.sstp_flutter.disconnect"
+// Sent by the service to itself through AlarmManager while the screen is off, so
+// the CPU wakes up long enough for the keepalive/echo to go out even on an
+// otherwise idle tunnel.
+internal const val ACTION_VPN_WAKEUP = "com.example.sstp_flutter.wakeup"
 
 internal const val NOTIFICATION_CHANNEL_NAME = "com.example.sstp_flutter.notification.channel"
 
@@ -106,6 +110,24 @@ private const val WAIT_FOR_OTHER_VPN_TIMEOUT_MS = 20_000L
 // initial handshake of its watchdog) finishes before we dethrone it.
 private const val OTHER_VPN_SETTLE_DELAY_MS = 2_000L
 private const val VPN_APPEAR_POLL_INTERVAL_MS = 500L
+
+// Screen off: instead of holding a partial wake lock for the whole session (the
+// CPU then never suspends, which is the biggest single battery drain of a tunnel
+// left connected), the lock is released and taken back only when it is needed:
+//   * a short lock renewed while traffic actually flows, so a download with the
+//     screen off is not throttled;
+//   * a periodic alarm that wakes the CPU long enough for the SSTP keepalive and
+//     the PPP echo to go out on an otherwise idle tunnel.
+// The alarm interval is deliberately shorter than the 20 s echo interval.
+private const val SCREEN_OFF_WAKEUP_INTERVAL_MS = 15_000L
+private const val SCREEN_OFF_WAKE_LOCK_MS = 8_000L
+// Data path: how often the short wake lock is renewed while bytes are moving,
+// and how long it is held after the last packet. Renewing is throttled so a
+// busy tunnel does not touch the main handler for every packet.
+private const val DATA_ACTIVITY_REFRESH_MS = 1_000L
+private const val DATA_ACTIVITY_WAKE_LOCK_MS = 10_000L
+// Request code of the screen-off wake-up alarm's PendingIntent.
+private const val WAKEUP_REQUEST_CODE = 42
 
 internal class SstpVpnService : VpnService() {
     private lateinit var prefs: SharedPreferences
@@ -151,6 +173,24 @@ internal class SstpVpnService : VpnService() {
     // suspend while the screen is off, which stalls the SSTP keepalive and the
     // PPP timers until the server drops the session.
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // Screen state. The tunnel itself does not depend on it, but everything that
+    // only exists for the user interface does: the traffic reporter, the
+    // foreground notification refresh and the short socket read timeout are all
+    // suspended while the screen is off (as shadowsocks-android does) and woken
+    // up again when it comes back.
+    private var screenStateMonitor: ScreenStateMonitor? = null
+
+    /** True while the device screen is on. Read by the terminals. */
+    @Volatile
+    internal var isScreenInteractive: Boolean = true
+
+    // Screen-off wake-up machinery: the periodic alarm plus the short wake lock
+    // it (and the data path) takes.
+    private var wakeUpAlarm: android.app.AlarmManager? = null
+    private var wakeUpPendingIntent: PendingIntent? = null
+    private val releaseIdleWakeLock = Runnable { releaseWakeLockIfScreenOff() }
+    private var lastDataActivityMs = 0L
 
     private fun setRootState(state: Boolean) {
         setBooleanPrefValue(state, OscPrefKey.ROOT_STATE, prefs)
@@ -241,6 +281,104 @@ internal class SstpVpnService : VpnService() {
         networkChangeObserver = NetworkChangeObserver(this) { reason ->
             onUnderlyingNetworkChanged(reason)
         }.also { it.start() }
+
+        // Track the screen so the UI-only work can stop while it is off.
+        screenStateMonitor = ScreenStateMonitor(this) { interactive ->
+            onScreenStateChanged(interactive)
+        }.also { it.start() }
+        isScreenInteractive = screenStateMonitor?.isInteractive ?: true
+    }
+
+    /**
+     * Called when the screen turns on or off. The tunnel keeps running either
+     * way; only the periodic UI work is suspended, so an idle tunnel with the
+     * screen off does not wake the CPU once per second.
+     */
+    private fun onScreenStateChanged(interactive: Boolean) {
+        isScreenInteractive = interactive
+        ConnectionLog.append(
+            "SERVICE",
+            if (interactive) "Screen on — resuming UI updates" else "Screen off — suspending UI updates"
+        )
+        // Wake the traffic reporter so the notification and the app get the
+        // current figures the moment the screen comes back, and stretch/relax
+        // the socket read timeout for the new state.
+        controlClient?.onScreenStateChanged(interactive)
+
+        if (interactive) {
+            // The tunnel is visible again: keep the CPU up and stop the periodic
+            // wake-ups.
+            cancelScreenOffWakeUps()
+            mainHandler.removeCallbacks(releaseIdleWakeLock)
+            if (controlClient != null) acquireWakeLock()
+        } else {
+            // Let the CPU suspend. The data path renews a short wake lock while
+            // bytes are moving and the periodic alarm wakes it for the keepalive.
+            scheduleScreenOffWakeUps()
+            mainHandler.removeCallbacks(releaseIdleWakeLock)
+            releaseWakeLock()
+        }
+    }
+
+    /**
+     * Keeps a short wake lock alive while the screen is off and bytes are moving,
+     * so an active transfer is not throttled by the CPU suspending. Called from
+     * the data path once per packet; the renewal is throttled so the main handler
+     * stays out of the per-packet path.
+     */
+    internal fun noteDataActivity() {
+        if (isScreenInteractive) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDataActivityMs < DATA_ACTIVITY_REFRESH_MS) return
+        lastDataActivityMs = now
+        acquireWakeLock()
+        mainHandler.removeCallbacks(releaseIdleWakeLock)
+        mainHandler.postDelayed(releaseIdleWakeLock, DATA_ACTIVITY_WAKE_LOCK_MS)
+    }
+
+    private fun releaseWakeLockIfScreenOff() {
+        if (isScreenInteractive) return
+        releaseWakeLock()
+    }
+
+    /**
+     * Arms the periodic screen-off wake-up. The alarm is one-shot (a repeating
+     * one is deferred while the device is idle), so it is re-armed every time it
+     * fires as long as the screen stays off.
+     */
+    private fun scheduleScreenOffWakeUps() {
+        val manager = getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager ?: return
+        wakeUpAlarm = manager
+        val intent = Intent(this, SstpVpnService::class.java).setAction(ACTION_VPN_WAKEUP)
+        val pending = PendingIntent.getService(
+            this,
+            WAKEUP_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        wakeUpPendingIntent = pending
+        try {
+            manager.setAndAllowWhileIdle(
+                android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + SCREEN_OFF_WAKEUP_INTERVAL_MS,
+                pending
+            )
+        } catch (e: Exception) {
+            ConnectionLog.append("ERROR", "Could not schedule the screen-off wake-up: ${e.message}")
+        }
+    }
+
+    private fun cancelScreenOffWakeUps() {
+        val pending = wakeUpPendingIntent
+        if (pending != null) {
+            val manager =
+                wakeUpAlarm ?: getSystemService(Context.ALARM_SERVICE) as? android.app.AlarmManager
+            try {
+                manager?.cancel(pending)
+            } catch (_: Exception) {
+            }
+        }
+        wakeUpPendingIntent = null
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -288,6 +426,11 @@ internal class SstpVpnService : VpnService() {
                 notificationSpeed = ""
                 beForegrounded()
                 acquireWakeLock()
+                // A connect that happens with the screen already off (auto-connect,
+                // quick-settings tile) must not keep the CPU up for the whole
+                // session: the receiver only reports changes, so apply the
+                // screen-off policy here as well.
+                if (!isScreenInteractive) onScreenStateChanged(false)
                 resetReconnectionLife(prefs)
                 // A new attempt clears any previous failure.
                 connectionErrorCode = ""
@@ -303,6 +446,27 @@ internal class SstpVpnService : VpnService() {
                 setRootState(true)
 
                 Service.START_STICKY
+            }
+
+            ACTION_VPN_WAKEUP -> {
+                // The periodic screen-off wake-up: give the tunnel a few seconds
+                // of CPU time for the keepalive/echo, then let it suspend again.
+                if (!isScreenInteractive &&
+                    connectionStatus == OscPrefKey.Connected.name &&
+                    !manuallyDisconnected
+                ) {
+                    acquireWakeLock()
+                    mainHandler.removeCallbacks(releaseIdleWakeLock)
+                    mainHandler.postDelayed(releaseIdleWakeLock, SCREEN_OFF_WAKE_LOCK_MS)
+                    // The alarm is one-shot: arm the next one.
+                    scheduleScreenOffWakeUps()
+                    Service.START_STICKY
+                } else {
+                    // Nothing to keep alive (tunnel down or screen back on).
+                    cancelScreenOffWakeUps()
+                    if (connectionStatus != OscPrefKey.Connected.name) stopSelf()
+                    Service.START_NOT_STICKY
+                }
             }
 
             else -> {
@@ -358,6 +522,13 @@ internal class SstpVpnService : VpnService() {
     internal fun onConnectionEstablished() {
         networkReconnectAttempts = 0
         lastEstablishedAtMs = SystemClock.elapsedRealtime()
+        // A tunnel that comes up with the screen already off must switch to the
+        // screen-off policy right away: the wake lock taken for the connect would
+        // otherwise be held for the whole session.
+        if (!isScreenInteractive) {
+            scheduleScreenOffWakeUps()
+            releaseWakeLock()
+        }
     }
 
     /**
@@ -698,6 +869,8 @@ internal class SstpVpnService : VpnService() {
         foregroundBuilder = null
         // Final guard: make sure the interface is gone before the service stops.
         controlClient?.closeTerminals()
+        cancelScreenOffWakeUps()
+        mainHandler.removeCallbacks(releaseIdleWakeLock)
         releaseWakeLock()
         stopForeground(true)
         stopSelf()
@@ -821,6 +994,10 @@ internal class SstpVpnService : VpnService() {
         networkChangeObserver?.stop()
         networkChangeObserver = null
 
+        screenStateMonitor?.stop()
+        screenStateMonitor = null
+
+
         // Release the TUN interface synchronously, before the scope is cancelled.
         // Doing it only through kill() was racy: scope.cancel() could cancel the
         // cleanup coroutine before it closed the descriptor, leaking the
@@ -830,6 +1007,8 @@ internal class SstpVpnService : VpnService() {
 
         scope.cancel()
 
+        cancelScreenOffWakeUps()
+        mainHandler.removeCallbacks(releaseIdleWakeLock)
         releaseWakeLock()
         setRootState(false)
         prefs.unregisterOnSharedPreferenceChangeListener(listener)

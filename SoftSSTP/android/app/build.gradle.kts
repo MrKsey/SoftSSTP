@@ -62,6 +62,17 @@ android {
         }
     }
 
+    // AGP 8.5+ otherwise embeds a Play "Dependency metadata" block in the APK
+    // signing block, which the F-Droid scanner rejects as an extra signing
+    // block. Turning it off here keeps the GitHub and the F-Droid APK identical,
+    // which the reproducible build check needs. AGP exposes no Gradle property
+    // for this, so the DSL block has to live in the build script.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
+
     // Name the produced APKs clearly and give every ABI its own version code
     // (versionCode * 10 + slot) so F-Droid can tell the split APKs apart. The
     // slot numbers must stay in sync with VercodeOperation in the F-Droid

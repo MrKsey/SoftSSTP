@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../services/link_launcher.dart';
 import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 
-/// Shows the "new version available" dialog. When the user accepts, the APK is
-/// downloaded and the system installer is opened.
+/// Shows the "new version available" dialog. When the user accepts, the release
+/// page is opened in the browser, where the APK can be downloaded. The app does
+/// not install updates itself: F-Droid forbids that, and the build has to stay
+/// identical to the one published there.
 Future<void> showUpdatePrompt(BuildContext context, UpdateInfo info) async {
   final accepted = await showDialog<bool>(
     context: context,
@@ -16,7 +19,7 @@ Future<void> showUpdatePrompt(BuildContext context, UpdateInfo info) async {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'SoftSSTP ${info.version} is ready to install.',
+            'SoftSSTP ${info.version} has been released.',
             style: TextStyle(color: AppTheme.textPrimary),
           ),
           if (info.notes.isNotEmpty) ...[
@@ -37,42 +40,16 @@ Future<void> showUpdatePrompt(BuildContext context, UpdateInfo info) async {
         ),
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Download'),
+          child: const Text('Open the release page'),
         ),
       ],
     ),
   );
-  if (accepted != true || !context.mounted) return;
-  await startUpdate(context, info);
+  if (accepted != true) return;
+  await openReleasePage(info);
 }
 
-/// Downloads the update and opens the installer. Asks for the "install unknown
-/// apps" permission first when it is missing.
-Future<void> startUpdate(BuildContext context, UpdateInfo info) async {
-  final messenger = ScaffoldMessenger.of(context);
-
-  if (!await UpdateService.canRequestPackageInstalls()) {
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Allow SoftSSTP to install apps, then tap the download again.',
-        ),
-        duration: Duration(seconds: 4),
-      ),
-    );
-    await UpdateService.openInstallPermissionSettings();
-    return;
-  }
-
-  messenger.showSnackBar(
-    const SnackBar(
-      content: Text('Downloading the update…'),
-      duration: Duration(seconds: 2),
-    ),
-  );
-  try {
-    await UpdateService.downloadAndInstall(info);
-  } catch (e) {
-    messenger.showSnackBar(SnackBar(content: Text('Update failed: $e')));
-  }
+/// Opens the release page in the device browser.
+Future<void> openReleasePage(UpdateInfo info) async {
+  await LinkLauncher.open(info.releaseUrl);
 }

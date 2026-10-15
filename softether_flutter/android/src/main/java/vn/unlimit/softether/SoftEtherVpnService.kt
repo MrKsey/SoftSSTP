@@ -59,6 +59,11 @@ class SoftEtherVpnService : VpnService() {
         private const val UPLOADED_DATA_KEY = "uploaded_data"
         private const val KEY_ULA_V6 = "ula_v6"
 
+        // How often the accumulated traffic totals are written to
+        // SharedPreferences. They used to be written on every per-second
+        // snapshot, which is a disk write per second for the whole session.
+        private const val TRAFFIC_PERSIST_INTERVAL_MS = 30_000L
+
         // Actions (kept for service start/stop intents)
         const val ACTION_CONNECT = "vn.unlimit.softether.CONNECT"
         const val ACTION_DISCONNECT = "vn.unlimit.softether.DISCONNECT"
@@ -161,12 +166,20 @@ class SoftEtherVpnService : VpnService() {
         }
 
         private fun notifyTrafficListeners(snapshot: SoftEtherTrafficSnapshot) {
+            storeTrafficSnapshot(snapshot)
+            mainHandler.post {
+                trafficListeners.forEach { it.onSoftEtherTrafficUpdated(snapshot) }
+            }
+        }
+
+        /**
+         * Stores the latest snapshot without delivering it. Used while the screen
+         * is off, so the app still gets the current figures when it comes back.
+         */
+        private fun storeTrafficSnapshot(snapshot: SoftEtherTrafficSnapshot) {
             currentTrafficSnapshot = snapshot
             if (snapshot.inBytes > 0L || snapshot.outBytes > 0L || snapshot.diffInBytes > 0L || snapshot.diffOutBytes > 0L) {
                 lastTrafficSnapshot = snapshot
-            }
-            mainHandler.post {
-                trafficListeners.forEach { it.onSoftEtherTrafficUpdated(snapshot) }
             }
         }
     }
@@ -180,6 +193,24 @@ class SoftEtherVpnService : VpnService() {
     private var lastStateUpdateTime = 0L
     private var pendingStateUpdate: (() -> Unit)? = null
     private var currentSessionName: String? = null
+
+    // Screen state. The tunnel itself does not depend on it; everything that
+    // only exists for the user interface does: the traffic snapshot delivery,
+    // the foreground notification refresh and the native idle poll are relaxed
+    // while the screen is off and restored when it comes back.
+    private var screenStateMonitor: ScreenStateMonitor? = null
+
+    /** True while the device screen is on. Read by the controller. */
+    @Volatile
+    var isScreenInteractive: Boolean = true
+        private set
+
+    // Traffic totals are accumulated in memory and written to SharedPreferences
+    // in batches instead of once per second, so an idle tunnel does not hit the
+    // disk 60 times a minute. Anything pending is flushed on teardown.
+    private var pendingDownloadedBytes = 0L
+    private var pendingUploadedBytes = 0L
+    private var lastTrafficPersistAtMs = 0L
 
     private val networkCallbackThread = HandlerThread("network-callback").apply { start() }
 
@@ -203,6 +234,34 @@ class SoftEtherVpnService : VpnService() {
         SoftEtherLog.append("SERVICE", "Service created")
         createNotificationChannel()
         registerNetworkReceiver()
+
+        // Track the screen so the UI-only work can stop while it is off.
+        screenStateMonitor = ScreenStateMonitor(this) { interactive ->
+            onScreenStateChanged(interactive)
+        }.also { it.start() }
+        isScreenInteractive = screenStateMonitor?.isInteractive ?: true
+    }
+
+    /**
+     * Called when the screen turns on or off. The tunnel keeps running either
+     * way; only the periodic UI work is suspended, so an idle tunnel with the
+     * screen off does not publish a snapshot (and redraw the notification) once
+     * per second.
+     */
+    private fun onScreenStateChanged(interactive: Boolean) {
+        isScreenInteractive = interactive
+        SoftEtherLog.append(
+            "SERVICE",
+            if (interactive) "Screen on — resuming UI updates" else "Screen off — suspending UI updates"
+        )
+        // Relax/restore the native idle poll and wake the snapshot loop, so the
+        // app and the notification are current the moment the screen comes back.
+        controller?.onScreenStateChanged(interactive)
+        if (interactive) {
+            // Deliver whatever the last snapshot was right away instead of
+            // waiting for the next tick of the (now slow) idle cadence.
+            notifyTrafficListeners(currentTrafficSnapshot)
+        }
     }
 
     private fun triggerDisconnectNotification() {
@@ -327,6 +386,10 @@ class SoftEtherVpnService : VpnService() {
         }
         
         unregisterNetworkReceiver()
+        screenStateMonitor?.stop()
+        screenStateMonitor = null
+        // Never lose the traffic accumulated since the last batch write.
+        flushPersistedTraffic()
         notifyTrafficListeners(SoftEtherTrafficSnapshot.EMPTY)
         // The instance is gone from here on, and in every path that matters the
         // session teardown has already completed: stopVpn() destroys the
@@ -519,11 +582,17 @@ class SoftEtherVpnService : VpnService() {
      * Establish the VPN tunnel interface
      */
     fun establishVpnInterface(config: ConnectionConfig): ParcelFileDescriptor? {
+        // Blocking TUN fd. AOSP's Builder defaults to NON-blocking, and
+        // TunTerminal's read loop treats a 0-length read as "nothing to do" —
+        // but that is exactly what a non-blocking empty TUN returns (libcore
+        // maps EAGAIN to 0), so the loop spun at a full CPU core on an idle
+        // tunnel. The SSTP side already calls setBlocking(true).
         val builder = Builder()
             .setSession(config.sessionName)
             .setMtu(config.mtu)
             .addAddress(config.localAddress, config.prefixLength)
             .addDnsServer(config.dnsServer)
+            .setBlocking(true)
 
         // Add secondary DNS if it differs from primary and is valid
         if (config.secondaryDnsServer.isNotEmpty() && config.secondaryDnsServer != config.dnsServer) {
@@ -725,18 +794,47 @@ class SoftEtherVpnService : VpnService() {
 
     private fun handleTrafficUpdate(snapshot: SoftEtherTrafficSnapshot) {
         accumulatePersistedTraffic(snapshot.diffInBytes, snapshot.diffOutBytes)
+        // The snapshot is stored either way (the app reads the current values on
+        // demand), but nothing is delivered to the UI and the notification is not
+        // redrawn while the screen is off — nobody can see either of them, and
+        // doing it once per second is what kept waking the CPU for nothing.
+        storeTrafficSnapshot(snapshot)
+        if (!isScreenInteractive) return
         notifyTrafficListeners(snapshot)
         if (currentState == STATE_CONNECTED && mDisplaySpeed) {
             updateNotification(formatTrafficSnapshot(snapshot))
         }
     }
 
+    /**
+     * Accumulates the byte deltas in memory and writes them to
+     * SharedPreferences at most once per [TRAFFIC_PERSIST_INTERVAL_MS].
+     * The totals are a user-visible statistic, not session state, so losing a
+     * few seconds on a crash is acceptable — writing every second is not.
+     */
     private fun accumulatePersistedTraffic(downloadedDelta: Long, uploadedDelta: Long) {
         if (downloadedDelta <= 0L && uploadedDelta <= 0L) return
+        pendingDownloadedBytes += downloadedDelta
+        pendingUploadedBytes += uploadedDelta
+        val now = System.currentTimeMillis()
+        if (lastTrafficPersistAtMs != 0L &&
+            now - lastTrafficPersistAtMs < TRAFFIC_PERSIST_INTERVAL_MS
+        ) return
+        flushPersistedTraffic()
+    }
+
+    /** Writes any pending traffic totals to SharedPreferences. */
+    private fun flushPersistedTraffic() {
+        val downloaded = pendingDownloadedBytes
+        val uploaded = pendingUploadedBytes
+        if (downloaded <= 0L && uploaded <= 0L) return
+        pendingDownloadedBytes = 0L
+        pendingUploadedBytes = 0L
+        lastTrafficPersistAtMs = System.currentTimeMillis()
         val prefs = getTrafficPrefs()
         prefs.edit()
-            .putLong(DOWNLOADED_DATA_KEY, prefs.getLong(DOWNLOADED_DATA_KEY, 0L) + downloadedDelta)
-            .putLong(UPLOADED_DATA_KEY, prefs.getLong(UPLOADED_DATA_KEY, 0L) + uploadedDelta)
+            .putLong(DOWNLOADED_DATA_KEY, prefs.getLong(DOWNLOADED_DATA_KEY, 0L) + downloaded)
+            .putLong(UPLOADED_DATA_KEY, prefs.getLong(UPLOADED_DATA_KEY, 0L) + uploaded)
             .apply()
     }
 

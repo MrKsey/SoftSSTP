@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
 /// A published GitHub release that is newer than the running build.
 class UpdateInfo {
@@ -18,20 +17,15 @@ class UpdateInfo {
   /// Browser URL of the release page.
   final String releaseUrl;
 
-  /// Release asset name to download URL, e.g.
-  /// "SoftSSTP-1.4.1-arm64-v8a.apk" to the direct download link.
-  final Map<String, String> assets;
-
   const UpdateInfo({
     required this.version,
     required this.tagName,
     required this.notes,
     required this.releaseUrl,
-    required this.assets,
   });
 }
 
-/// Raised when the release check or the download cannot be completed.
+/// Raised when the release check cannot be completed.
 class UpdateCheckException implements Exception {
   final String message;
   const UpdateCheckException(this.message);
@@ -40,22 +34,14 @@ class UpdateCheckException implements Exception {
   String toString() => message;
 }
 
-/// Checks the project's GitHub releases for a newer version and drives the
-/// download and installation of the matching APK.
+/// Checks the project's GitHub releases for a newer version. The app only
+/// reports the release and opens its page in the browser; installing the APK is
+/// left to the browser or the store, because F-Droid forbids apps that install
+/// their own updates.
 class UpdateService {
   static const String repo = 'MrKsey/SoftSSTP';
   static const String _latestReleaseUrl =
       'https://api.github.com/repos/$repo/releases/latest';
-
-  static const MethodChannel _channel = MethodChannel('softsstp/update');
-
-  /// True in the F-Droid build, which passes `--dart-define=FDROID=true`.
-  /// F-Droid forbids apps that update themselves, so the Update section is
-  /// hidden there.
-  static const bool isFdroidBuild = bool.fromEnvironment(
-    'FDROID',
-    defaultValue: false,
-  );
 
   /// Asks GitHub for the latest release. Returns the update when it is newer
   /// than [currentVersion], null when the build is up to date. Throws
@@ -94,17 +80,6 @@ class UpdateService {
         return null;
       }
 
-      final assets = <String, String>{};
-      final rawAssets = decoded['assets'];
-      if (rawAssets is List) {
-        for (final asset in rawAssets) {
-          if (asset is! Map) continue;
-          final name = asset['name'];
-          final url = asset['browser_download_url'];
-          if (name is String && url is String) assets[name] = url;
-        }
-      }
-
       return UpdateInfo(
         version: tag.replaceFirst(RegExp(r'^[vV]'), ''),
         tagName: tag,
@@ -112,7 +87,6 @@ class UpdateService {
         releaseUrl:
             (decoded['html_url'] as String?) ??
             'https://github.com/$repo/releases',
-        assets: assets,
       );
     } on UpdateCheckException {
       rethrow;
@@ -120,42 +94,6 @@ class UpdateService {
       throw UpdateCheckException('$e');
     } finally {
       client.close(force: true);
-    }
-  }
-
-  /// True when the system allows this app to install packages.
-  static Future<bool> canRequestPackageInstalls() async {
-    try {
-      return await _channel.invokeMethod<bool>('canRequestPackageInstalls') ??
-          false;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Opens the system screen where the user grants "install unknown apps".
-  static Future<void> openInstallPermissionSettings() async {
-    try {
-      await _channel.invokeMethod<void>('openInstallPermissionSettings');
-    } catch (_) {}
-  }
-
-  /// Downloads the APK for this device's ABI and hands it to the system
-  /// installer. Throws [UpdateCheckException] when the download fails.
-  static Future<void> downloadAndInstall(UpdateInfo info) async {
-    final assets = info.assets.entries
-        .map((e) => {'name': e.key, 'url': e.value})
-        .toList();
-    if (assets.isEmpty) {
-      throw const UpdateCheckException('This release has no APK attached.');
-    }
-    try {
-      await _channel.invokeMethod<void>('downloadAndInstall', {
-        'version': info.version,
-        'assets': assets,
-      });
-    } on PlatformException catch (e) {
-      throw UpdateCheckException(e.message ?? 'Download failed');
     }
   }
 

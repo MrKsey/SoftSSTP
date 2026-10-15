@@ -21,6 +21,7 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _animationController;
   late Animation<double> _pulseAnimation;
+  VpnProvider? _vpnProvider;
 
   @override
   void initState() {
@@ -32,10 +33,40 @@ class _HomeScreenState extends State<HomeScreen>
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
-    _animationController.repeat(reverse: true);
+    // The pulse is only shown while a connection is being established. It is
+    // started from _syncPulseAnimation() instead of running forever here: an
+    // idle controller still keeps the ticker alive, so the engine redraws a
+    // frame on every vsync and burns CPU while the button just sits there.
 
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<VpnProvider>();
+    if (!identical(provider, _vpnProvider)) {
+      _vpnProvider?.removeListener(_syncPulseAnimation);
+      _vpnProvider = provider..addListener(_syncPulseAnimation);
+      _syncPulseAnimation();
+    }
+  }
+
+  /// Starts the button pulse while the tunnel is coming up and stops it
+  /// otherwise, so no frames are scheduled once the connection has settled.
+  void _syncPulseAnimation() {
+    final status = _vpnProvider?.status;
+    final shouldPulse =
+        status == VpnStatus.connecting || status == VpnStatus.reconnecting;
+    if (shouldPulse) {
+      if (!_animationController.isAnimating) {
+        _animationController.repeat(reverse: true);
+      }
+    } else if (_animationController.isAnimating) {
+      _animationController.stop();
+      _animationController.value = 0;
+    }
   }
 
   /// Startup update check. Announces a newer release once per version.
@@ -50,6 +81,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    _vpnProvider?.removeListener(_syncPulseAnimation);
+    _vpnProvider = null;
     WidgetsBinding.instance.removeObserver(this);
     _animationController.dispose();
     super.dispose();
@@ -61,11 +94,15 @@ class _HomeScreenState extends State<HomeScreen>
     // in-memory status may be stale. Re-sync with the native side on resume.
     if (state == AppLifecycleState.resumed) {
       context.read<VpnProvider>().syncStatus();
+      _syncPulseAnimation();
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       // Persist the traffic totals before the OS may kill the process, so the
       // counter survives a screen-off / resume cycle.
       context.read<VpnProvider>().saveTrafficTotals();
+      // No frames are drawn in the background anyway; park the pulse so the
+      // controller does not resume mid-cycle on the way back.
+      _animationController.stop();
     }
   }
 

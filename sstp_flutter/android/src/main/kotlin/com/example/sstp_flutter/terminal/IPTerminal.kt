@@ -17,9 +17,11 @@ import com.example.sstp_flutter.preference.accessor.getStringPrefValue
 import com.example.sstp_flutter.trafficTotalDownloadBits
 import com.example.sstp_flutter.trafficTotalUploadBits
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.InetAddress
@@ -33,6 +35,11 @@ private const val TRAFFIC_REPORT_INTERVAL_MS = 1_000L
 // so an idle tunnel wakes the CPU less often. It does not touch the data path,
 // which blocks on the TUN read.
 private const val TRAFFIC_REPORT_INTERVAL_POWER_SAVE_MS = 3_000L
+
+// Screen off: the reporter keeps the byte counters current (so the app shows the
+// right figures the moment the screen comes back) but no longer touches the
+// Flutter channel or the foreground notification, and ticks far less often.
+private const val TRAFFIC_REPORT_INTERVAL_SCREEN_OFF_MS = 15_000L
 
 // `establish()` can return null on some devices when a previous TUN interface
 // has not been released yet. Retry a few times with a fresh builder before
@@ -70,6 +77,11 @@ internal class IPTerminal(private val bridge: ClientBridge) {
     private var lastReportedDownloadBytes = 0L
     private var lastReportedUploadBytes = 0L
     private var lastReportAtMs = 0L
+
+    // Wakes the reporter as soon as the screen comes back, so the app and the
+    // notification get the current figures without waiting for the next (long)
+    // idle tick. Conflated: one pending wake-up is enough.
+    private val screenWakeUp = Channel<Unit>(Channel.CONFLATED)
 
     @SuppressLint("NewApi")
     internal suspend fun initialize() {
@@ -353,6 +365,8 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         if (size > 0) {
             totalDownloadBytes.addAndGet(size.toLong())
             totalDownloadPackets.incrementAndGet()
+            // Screen off: keep the CPU up while data is actually moving.
+            bridge.service.noteDataActivity()
         }
     }
 
@@ -365,6 +379,7 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         if (bytesRead > 0) {
             totalUploadBytes.addAndGet(bytesRead.toLong())
             totalUploadPackets.incrementAndGet()
+            bridge.service.noteDataActivity()
         }
     }
 
@@ -384,7 +399,12 @@ internal class IPTerminal(private val bridge: ClientBridge) {
 
         trafficJob = bridge.service.scope.launch {
             while (isActive) {
-                delay(trafficReportIntervalMs())
+                // Sleep until the next tick, or wake up at once when the screen
+                // comes back — a long idle interval must not delay the first
+                // update the user sees after unlocking the device.
+                withTimeoutOrNull(trafficReportIntervalMs()) {
+                    screenWakeUp.receive()
+                }
 
                 val totalDownload = totalDownloadBytes.get()
                 val totalUpload = totalUploadBytes.get()
@@ -409,8 +429,16 @@ internal class IPTerminal(private val bridge: ClientBridge) {
                 val totalDownloadBits = totalDownload * 8
                 val totalUploadBits = totalUpload * 8
 
+                // Updated even while the screen is off: the app reads these on
+                // demand, so they must be current when it comes back.
                 trafficTotalDownloadBits = totalDownloadBits
                 trafficTotalUploadBits = totalUploadBits
+
+                // With the screen off nobody can see the app or the notification,
+                // so the MethodChannel calls and the notification refresh are
+                // skipped entirely (this is the per-second work that used to keep
+                // waking the CPU for nothing).
+                if (!bridge.service.isScreenInteractive) continue
 
                 FlutterCaller().DownloadSpeed(downloadBps, totalDownloadBits)
                 FlutterCaller().UploadSpeed(uploadBps, totalUploadBits)
@@ -419,16 +447,28 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         }
     }
 
+    /** Called on every screen on/off transition (see ControlClient). */
+    internal fun onScreenStateChanged(interactive: Boolean) {
+        // Only the transition back to "on" needs to wake the loop: the figures
+        // have to appear immediately. Going off is picked up on the next tick.
+        if (interactive) screenWakeUp.trySend(Unit)
+    }
+
     /**
      * Traffic report cadence. Read on every tick so toggling the energy-saving
-     * switch takes effect without reconnecting.
+     * switch takes effect without reconnecting, and so the screen state is
+     * honoured as soon as it changes.
      */
-    private fun trafficReportIntervalMs(): Long =
-        if (getBooleanPrefValue(OscPrefKey.POWER_SAVING, bridge.prefs)) {
+    private fun trafficReportIntervalMs(): Long {
+        if (!bridge.service.isScreenInteractive) {
+            return TRAFFIC_REPORT_INTERVAL_SCREEN_OFF_MS
+        }
+        return if (getBooleanPrefValue(OscPrefKey.POWER_SAVING, bridge.prefs)) {
             TRAFFIC_REPORT_INTERVAL_POWER_SAVE_MS
         } else {
             TRAFFIC_REPORT_INTERVAL_MS
         }
+    }
 
     internal fun stopTrafficReporting() {
         trafficJob?.cancel()

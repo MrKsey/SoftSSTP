@@ -130,6 +130,14 @@ class TunTerminal(
                         SoftEtherLog.append("TUN", "TUN interface closed (EOF)")
                         break
                     }
+                    else -> {
+                        // length == 0: what a non-blocking fd with an empty
+                        // queue returns (libcore maps EAGAIN to 0). Without
+                        // this the loop spins at a full CPU core. The interface
+                        // is established in blocking mode, so this is a safety
+                        // net against the spin coming back, not the normal path.
+                        delay(1)
+                    }
                 }
             } catch (e: Exception) {
                 if (isRunning.get()) {

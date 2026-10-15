@@ -468,4 +468,15 @@ internal class ControlClient(internal val bridge: ClientBridge) {
         bridge.sslTerminal?.close()
         bridge.ipTerminal?.close()
     }
+
+    /**
+     * Forwards a screen on/off transition to the terminals: the traffic reporter
+     * stops touching the Flutter channel and the notification while the screen is
+     * off (and publishes immediately when it comes back), and the SSL socket
+     * read timeout is stretched so an idle tunnel wakes the CPU less often.
+     */
+    internal fun onScreenStateChanged(interactive: Boolean) {
+        bridge.ipTerminal?.onScreenStateChanged(interactive)
+        bridge.sslTerminal?.onScreenStateChanged(interactive)
+    }
 }

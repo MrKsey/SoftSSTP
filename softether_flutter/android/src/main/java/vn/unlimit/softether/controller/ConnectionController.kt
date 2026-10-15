@@ -9,10 +9,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import vn.unlimit.softether.SoftEtherVpnService
 import vn.unlimit.softether.SoftEtherLog
 import vn.unlimit.softether.SoftEtherTrafficSnapshot
@@ -56,12 +58,26 @@ class ConnectionController(
         // applied to the per-second housekeeping cycles while it is on.
         private const val IDLE_POLL_MS = 100
         private const val IDLE_POLL_POWER_SAVE_MS = 500
+        // Screen off: nothing is visible, so the native receive loop may sleep
+        // much longer between idle wake-ups. Data still arrives immediately —
+        // poll() returns on the first byte.
+        private const val IDLE_POLL_SCREEN_OFF_MS = 1_000
         private const val POWER_SAVE_CYCLE_FACTOR = 3
+        // Screen off: the per-second housekeeping cycles are stretched this much.
+        private const val SCREEN_OFF_CYCLE_FACTOR = 15
+        // Screen off: the keepalive watchdog check cadence. The timeout itself is
+        // 30 s, so checking every 5 s is still comfortably inside it.
+        private const val WATCHDOG_INTERVAL_SCREEN_OFF_MS = 5_000L
     }
 
     /** Stretch applied to the periodic housekeeping cycles (1 when off). */
     private val powerSaveCycleFactor: Long =
         if (config.powerSaving) POWER_SAVE_CYCLE_FACTOR.toLong() else 1L
+
+    // Wakes the snapshot loop as soon as the screen comes back, so the app and
+    // the notification get the current figures without waiting for the next
+    // (long) screen-off tick. Conflated: one pending wake-up is enough.
+    private val snapshotWakeUp = Channel<Unit>(Channel.CONFLATED)
 
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -302,17 +318,43 @@ class ConnectionController(
     }
 
     /**
-     * Applies the energy-saving idle wait to the active native handle. poll()
-     * still returns on the first byte, so this only changes how often an idle
-     * tunnel wakes the CPU.
+     * Applies the idle wait to the active native handle. poll() still returns on
+     * the first byte, so this only changes how often an idle tunnel wakes the
+     * CPU. Both the energy-saving switch and the screen state stretch it; the
+     * screen state wins while the screen is off.
      */
     private fun applyPowerSaving() {
+        val idlePollMs = idlePollMs()
         runCatching {
-            val idlePollMs = if (config.powerSaving) IDLE_POLL_POWER_SAVE_MS else IDLE_POLL_MS
-            client.nativeSetOption(nativeHandle, SoftEtherClient.OPTION_IDLE_POLL_MS, idlePollMs.toLong())
-            Log.d(TAG, "Idle poll: ${idlePollMs}ms (power saving=${config.powerSaving})")
+            client.nativeSetOption(nativeHandle, SoftEtherClient.OPTION_IDLE_POLL_MS, idlePollMs)
+            Log.d(
+                TAG,
+                "Idle poll: ${idlePollMs}ms (power saving=${config.powerSaving}, " +
+                    "screen interactive=${service.isScreenInteractive})"
+            )
         }.onFailure {
             Log.w(TAG, "Failed to set the idle poll", it)
+        }
+    }
+
+    /** Idle wait of the native receive loop for the current screen/power state. */
+    private fun idlePollMs(): Long = when {
+        !service.isScreenInteractive -> IDLE_POLL_SCREEN_OFF_MS.toLong()
+        config.powerSaving -> IDLE_POLL_POWER_SAVE_MS.toLong()
+        else -> IDLE_POLL_MS.toLong()
+    }
+
+    /**
+     * Called by the service on every screen on/off transition: re-applies the
+     * idle poll to the live handle and, when the screen comes back, wakes the
+     * snapshot loop so the figures appear at once.
+     */
+    fun onScreenStateChanged(interactive: Boolean) {
+        if (nativeHandle != 0L) {
+            applyPowerSaving()
+        }
+        if (interactive) {
+            snapshotWakeUp.trySend(Unit)
         }
     }
 
@@ -1253,7 +1295,7 @@ connectInFlight.set(true)
             var lastWatchdogLog = 0L
             while (isConnected() && !isCancelled.get()) {
                 try {
-                    delay(1000L * powerSaveCycleFactor) // Check every second (stretched by energy saving)
+                    delay(watchdogIntervalMs()) // Check periodically (stretched by energy saving and screen state)
 
                     if (keepAliveManager.shouldSendKeepAlive()) {
                         // Keepalive is handled in native layer
@@ -1293,6 +1335,18 @@ connectInFlight.set(true)
             }
             keepAliveManager.stop()
         }
+    }
+
+    /**
+     * Keepalive watchdog cadence. Stretched by the energy-saving switch, and
+     * stretched further while the screen is off — the timeout it enforces is
+     * 30 s, so a slower check is still well inside it.
+     */
+    private fun watchdogIntervalMs(): Long {
+        if (!service.isScreenInteractive) {
+            return WATCHDOG_INTERVAL_SCREEN_OFF_MS
+        }
+        return 1000L * powerSaveCycleFactor
     }
 
     /**
@@ -1402,17 +1456,30 @@ connectInFlight.set(true)
                 currentState != ConnectionState.ERROR
             ) {
                 try {
-                    delay(STATS_INTERVAL_MS * powerSaveCycleFactor)
+                    // Sleep until the next tick, or wake up at once when the
+                    // screen comes back — the screen-off interval is long and must
+                    // not delay the first update the user sees after unlocking.
+                    withTimeoutOrNull(statsIntervalMs()) {
+                        snapshotWakeUp.receive()
+                    }
                     if (isConnected()) {
-                        // Publish the speed snapshot ONLY here, once per second.
+                        // Publish the speed snapshot ONLY here, once per tick.
                         // It used to also be published from the hot send/receive
                         // paths, whose races with this timer made the interval
                         // between snapshots jump around — and since the speed is
                         // diff/interval, the notification's up/down figures
                         // flickered (and looked like per-link speeds). The byte
                         // counters already sum every TCP link, so a single
-                        // snapshot per second is both correct and stable.
+                        // snapshot per tick is both correct and stable.
+                        //
+                        // The service drops the snapshot from the UI while the
+                        // screen is off, but publishing it still advances the
+                        // published counters, so the first visible snapshot after
+                        // the screen comes back carries the right deltas.
                         publishTrafficSnapshot()
+                        // The log lines below are diagnostics for a session the
+                        // user is looking at; skip them while the screen is off.
+                        if (!service.isScreenInteractive) continue
                         // Surface additional connections coming up or dropping.
                         logSessionInfo()
                         // Periodically show how the load spreads across the links.
@@ -1420,7 +1487,7 @@ connectInFlight.set(true)
                         Log.d(TAG, "Stats: sent=${bytesSent.get()} bytes (${packetsSent.get()} pkts), " +
                                 "received=${bytesReceived.get()} bytes (${packetsReceived.get()} pkts)")
                         // Phase 13G: surface native health counters alongside the
-                        // traffic snapshot (same 1 s cadence, debug-level only).
+                        // traffic snapshot (same cadence, debug-level only).
                         client.getStats()?.let { st ->
                             Log.d(TAG,
                                 "stats: tx=${st.txPackets}p/${st.txBytes}B rx=${st.rxPackets}p/${st.rxBytes}B " +
@@ -1433,6 +1500,17 @@ connectInFlight.set(true)
                 }
             }
         }
+    }
+
+    /**
+     * Snapshot cadence. The energy-saving switch stretches it; the screen state
+     * stretches it much further, since with the screen off nothing is visible.
+     */
+    private fun statsIntervalMs(): Long {
+        if (!service.isScreenInteractive) {
+            return STATS_INTERVAL_MS * SCREEN_OFF_CYCLE_FACTOR
+        }
+        return STATS_INTERVAL_MS * powerSaveCycleFactor
     }
 
     private fun resetTrafficPublishing(publishSnapshot: Boolean) {

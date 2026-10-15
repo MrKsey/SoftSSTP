@@ -329,12 +329,10 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                 const SizedBox(height: 16),
                 _buildDonateSection(),
                 const SizedBox(height: 32),
-                if (!UpdateService.isFdroidBuild) ...[
-                  _buildSectionTitle('Update'),
-                  const SizedBox(height: 16),
-                  _buildUpdateSection(provider),
-                  const SizedBox(height: 32),
-                ],
+                _buildSectionTitle('Update'),
+                const SizedBox(height: 16),
+                _buildUpdateSection(provider),
+                const SizedBox(height: 32),
                 _buildSectionTitle('About'),
                 const SizedBox(height: 16),
                 _buildAboutSection(),
@@ -860,8 +858,11 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Wake the CPU less often while idle. Traffic speed is '
-                      'unaffected, the status and speed refresh slower',
+                      'Extra saving on top of the automatic one. With the screen '
+                      'off the app already stops the per-second updates and lets '
+                      'the CPU sleep; this stretches them with the screen on too. '
+                      'Traffic speed is unaffected, the status and speed refresh '
+                      'slower',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppTheme.textSecondary,
@@ -985,17 +986,17 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
           if (update != null) ...[
             Divider(color: AppTheme.dividerColor, height: 24),
             InkWell(
-              onTap: () => startUpdate(context, update),
+              onTap: () => openReleasePage(update),
               borderRadius: BorderRadius.circular(12),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(
                   children: [
-                    Icon(Icons.download_outlined, color: AppTheme.primaryColor),
+                    Icon(Icons.open_in_new, color: AppTheme.primaryColor),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'Download version ${update.version}',
+                        'Open the release page for ${update.version}',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w500,
