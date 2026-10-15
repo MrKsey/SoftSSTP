@@ -45,6 +45,12 @@ jobs:
       # Empty unless the KEYSTORE_BASE64 secret is configured. Used to decide
       # whether the stable release keystore can be restored.
       KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      # Keep the pub cache inside the checkout, at the same absolute path the
+      # F-Droid recipe uses. The path to the Dart sources is recorded in the
+      # debug info of libdartjni.so and the linker hashes it into the build-id,
+      # which survives stripping and ships inside the APK. F-Droid compares the
+      # APKs byte for byte, so the two builds have to agree on this path.
+      PUB_CACHE: ${{ github.workspace }}/SoftSSTP/.pub-cache
 
     steps:
       - name: Checkout

@@ -13,16 +13,17 @@ RepoType: git
 Repo: https://github.com/MrKsey/SoftSSTP.git
 
 Builds:
-  - versionName: 1.6.0
-    versionCode: 121
-    commit: v1.6.0
+  - versionName: 1.6.1
+    versionCode: 131
+    commit: v1.6.1
     subdir: SoftSSTP
     submodules: true
     sudo:
-      - mkdir -p /home/runner/work/SoftSSTP/SoftSSTP
+      - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    binary: https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-armeabi-v7a.apk
+    binary: 
+      https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-armeabi-v7a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -46,43 +47,43 @@ Builds:
       - flutterVersion=$(sed -n -E "s/.*flutter-version:\s'(.*)'/\1/p" ../.github/workflows/release.yml)
       - '[[ $flutterVersion ]]'
       - git -C $$flutter$$ checkout -f $flutterVersion
-      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
-      - cd ..
-      - mv SoftSSTP $repo
-      - pushd $repo
-      - export PUB_CACHE=$(pwd)/.pub-cache
+      - export orig=$(cd .. && pwd)
+      - export proj=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - mv $orig /home/runner/work/SoftSSTP/SoftSSTP
+      - cd $proj
+      - export PUB_CACHE=$proj/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
-      - popd
-      - mv $repo SoftSSTP
+      - mv /home/runner/work/SoftSSTP/SoftSSTP $orig
+      - cd $orig/SoftSSTP
     scanignore:
       - softether_flutter/pubspec.yaml
       - sstp_flutter/pubspec.yaml
     scandelete:
       - SoftSSTP/.pub-cache
     build:
-      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
-      - cd ..
-      - mv SoftSSTP $repo
-      - pushd $repo
-      - export PUB_CACHE=$(pwd)/.pub-cache
+      - export orig=$(cd .. && pwd)
+      - export proj=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - mv $orig /home/runner/work/SoftSSTP/SoftSSTP
+      - cd $proj
+      - export PUB_CACHE=$proj/.pub-cache
       - export PATH=$$NDK$$/prebuilt/linux-x86_64/bin:$PATH
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi
-        --target-platform=android-arm
-      - popd
-      - mv $repo SoftSSTP
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform=android-arm
+      - mv /home/runner/work/SoftSSTP/SoftSSTP $orig
+      - cd $orig/SoftSSTP
     ndk: 28.2.13676358
 
-  - versionName: 1.6.0
-    versionCode: 122
-    commit: v1.6.0
+  - versionName: 1.6.1
+    versionCode: 132
+    commit: v1.6.1
     subdir: SoftSSTP
     submodules: true
     sudo:
-      - mkdir -p /home/runner/work/SoftSSTP/SoftSSTP
+      - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    binary: https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-arm64-v8a.apk
+    binary: 
+      https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-arm64-v8a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -106,32 +107,33 @@ Builds:
       - flutterVersion=$(sed -n -E "s/.*flutter-version:\s'(.*)'/\1/p" ../.github/workflows/release.yml)
       - '[[ $flutterVersion ]]'
       - git -C $$flutter$$ checkout -f $flutterVersion
-      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
-      - cd ..
-      - mv SoftSSTP $repo
-      - pushd $repo
-      - export PUB_CACHE=$(pwd)/.pub-cache
+      - export orig=$(cd .. && pwd)
+      - export proj=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - mv $orig /home/runner/work/SoftSSTP/SoftSSTP
+      - cd $proj
+      - export PUB_CACHE=$proj/.pub-cache
       - $$flutter$$/bin/flutter config --no-analytics
       - $$flutter$$/bin/flutter pub get --enforce-lockfile
-      - popd
-      - mv $repo SoftSSTP
+      - mv /home/runner/work/SoftSSTP/SoftSSTP $orig
+      - cd $orig/SoftSSTP
     scanignore:
       - softether_flutter/pubspec.yaml
       - sstp_flutter/pubspec.yaml
     scandelete:
       - SoftSSTP/.pub-cache
     build:
-      - export repo=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
-      - cd ..
-      - mv SoftSSTP $repo
-      - pushd $repo
-      - export PUB_CACHE=$(pwd)/.pub-cache
+      - export orig=$(cd .. && pwd)
+      - export proj=/home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP
+      - mv $orig /home/runner/work/SoftSSTP/SoftSSTP
+      - cd $proj
+      - export PUB_CACHE=$proj/.pub-cache
       - export PATH=$$NDK$$/prebuilt/linux-x86_64/bin:$PATH
-      - $$flutter$$/bin/flutter build apk --release --split-per-abi
-        --target-platform=android-arm64
-      - popd
-      - mv $repo SoftSSTP
+      - $$flutter$$/bin/flutter build apk --release --split-per-abi --target-platform=android-arm64
+      - mv /home/runner/work/SoftSSTP/SoftSSTP $orig
+      - cd $orig/SoftSSTP
     ndk: 28.2.13676358
+
+AllowedAPKSigningKeys: e755a91d46c619714a10b54e2f8b91eac71a92a4bf1be92d462701aadf2788c1
 
 MaintainerNotes: |-
   Version name and code come from SoftSSTP/pubspec.yaml (the number after "+").
@@ -145,10 +147,21 @@ MaintainerNotes: |-
   at. Two things keep the two builds identical: the release APK is built from
   the same pubspec version, Flutter version and NDK, and the source carries no
   F-Droid-only switches any more (the in-app updater is gone, see below).
-  The build path matters, so prebuild and build move the checkout to
-  /home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP, the path the GitHub runner uses
-  (actions/checkout puts the repository at /home/runner/work/<repo>/<repo> and
-  the Flutter project lives in its SoftSSTP subdirectory).
+  Three details keep the native libraries identical as well. OpenSSL is built
+  with a fixed prefix, because OPENSSLDIR, ENGINESDIR and MODULESDIR are compiled
+  into libcrypto and the build directory would otherwise leak into .rodata. Its
+  build date is pinned through SOURCE_DATE_EPOCH (the OpenSSL submodule commit
+  date), for the same reason. And the linker build-id is dropped, since it hashes
+  the debug info, which records the NDK path. Both builders also keep the pub
+  cache at the same absolute path: the path to the Dart sources ends up in
+  libdartjni.so and in its build-id.
+  The build path matters, so prebuild and build move the whole checkout to
+  /home/runner/work/SoftSSTP/SoftSSTP, the path actions/checkout uses on the
+  GitHub runner. The whole tree moves, not just the Flutter project: pubspec.yaml
+  pulls softether_flutter and sstp_flutter in as path dependencies from the
+  repository root, and Dart records their absolute paths, so the layout has to
+  match upstream as well. The Flutter project itself then sits at
+  /home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP.
   The SoftEther plugin builds OpenSSL (pinned submodule) from source during the
   Gradle build, so the buildserver needs bash and perl (both present) plus GNU
   make. make is added to PATH from the NDK's own prebuilt bin, since the
@@ -175,13 +188,11 @@ MaintainerNotes: |-
   ipapi.co, ip-api.com, api.ipify.org, icanhazip.com). The tunnel itself works
   with any user-supplied SSTP or SoftEther server and does not depend on them.
 
-AllowedAPKSigningKeys: e755a91d46c619714a10b54e2f8b91eac71a92a4bf1be92d462701aadf2788c1
-
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
 VercodeOperation:
   - '%c * 10 + 1'
   - '%c * 10 + 2'
 UpdateCheckData: SoftSSTP/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
-CurrentVersion: 1.6.0
-CurrentVersionCode: 122
+CurrentVersion: 1.6.1
+CurrentVersionCode: 132

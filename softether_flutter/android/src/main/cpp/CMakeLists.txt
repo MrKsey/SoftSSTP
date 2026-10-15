@@ -89,6 +89,12 @@ target_compile_options(softether PRIVATE
     -fPIC
 )
 
+# The NDK path ends up in the debug info, and the linker hashes that debug info
+# into the build-id. The path differs between the CI builder and the F-Droid
+# builder, so the build-id differs too. It survives stripping and ships inside
+# the APK, and F-Droid compares the APKs byte for byte, so drop it.
+target_link_options(softether PRIVATE -Wl,--build-id=none)
+
 # Phase 13A: per-packet data-path trace logging. Off by default — a formatted
 # logd write per packet dominates mobile throughput. Enable for data-path
 # debugging (e.g. -DSE_TRACE_PACKETS=ON via externalNativeBuild arguments).

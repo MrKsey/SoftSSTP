@@ -100,6 +100,20 @@ build_openssl() {
     local OUTPUT_DIR="$BUILD_DIR/$ABI"
     local JNI_ABI_DIR="$JNILIBS_DIR/$ABI"
     
+    # The prefix is compiled into OPENSSLDIR, ENGINESDIR and MODULESDIR, so it
+    # must not depend on where the checkout happens to live: the F-Droid build
+    # runs in a different directory than the CI build, and a differing string
+    # shifts the whole .rodata section and breaks the reproducible build. The
+    # archives are copied out of the build tree below, so this prefix never has
+    # to point at anything real.
+    local INSTALL_PREFIX="/usr/local"
+    
+    # Pin the timestamp that mkbuildinf.pl bakes into libcrypto. Without it the
+    # "built on: ..." string changes on every build, which has the same effect
+    # on .rodata. The OpenSSL submodule commit is the same in both builds, so
+    # its date is a stable, meaningful choice.
+    export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$OPENSSL_DIR" log -1 --format=%ct 2>/dev/null || echo 0)}"
+    
     # Drop any previous install output so a failed run cannot leave stale
     # headers/objects behind for the next one.
     rm -rf "$OUTPUT_DIR"
@@ -143,16 +157,22 @@ build_openssl() {
         no-stdio \
         no-tests \
         $EXTRA_OPTS \
-        --prefix="$OUTPUT_DIR" \
-        --openssldir="$OUTPUT_DIR"
+        --prefix="$INSTALL_PREFIX" \
+        --openssldir="$INSTALL_PREFIX/ssl"
     
     # Build only the libraries
     log_info "Building OpenSSL libraries..."
     make -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)" build_libs
     
-    # Install the libraries and headers
-    log_info "Installing OpenSSL libraries..."
-    make install_sw
+    # Collect the archives and the generated headers. `make install_sw` is
+    # deliberately not used: it would write to $INSTALL_PREFIX (which needs root
+    # and would pollute the machine) and it exists only to lay out a file tree we
+    # do not need. Copying straight out of the build tree gives the same two
+    # archives plus the ABI-specific headers that CMakeLists.txt expects.
+    log_info "Copying libraries and headers..."
+    mkdir -p "$OUTPUT_DIR/lib" "$OUTPUT_DIR/include/openssl"
+    cp libssl.a libcrypto.a "$OUTPUT_DIR/lib/"
+    cp include/openssl/*.h "$OUTPUT_DIR/include/openssl/"
     
     # Copy libraries to jniLibs
     log_info "Copying libraries to jniLibs/$ABI/"

@@ -1,0 +1,1 @@
+Build-only update: the F-Droid and the GitHub build now produce the same APK byte for byte, so F-Droid ships the APK from the releases page instead of a rebuild. Nothing changes in the app itself.
