@@ -268,9 +268,9 @@ matching release. F-Droid therefore publishes the APK from the releases page, si
 with the maintainer's key, which `AllowedAPKSigningKeys` pins down. Three details keep
 the two builds identical: OpenSSL is configured with a fixed prefix, its build date is a
 constant in the build script, and the linker build-id is dropped for every native
-module. Nothing in the build switches the app between channels: the in-app updater and
-its `REQUEST_INSTALL_PACKAGES` permission are gone from the source, so one APK serves
-both GitHub and F-Droid.
+module. Nothing in the build switches the app between channels: when a newer version
+exists the app only opens the release page and never installs APKs itself, so one APK
+serves both GitHub and F-Droid.
 
 ## Donate
 

@@ -179,10 +179,9 @@ MaintainerNotes: |-
   property for this, so the DSL block lives in the build script itself, and both
   the GitHub and the F-Droid build produce an APK without it.
   The app checks the GitHub release page for a newer version and opens that page
-  in the browser. It does not download or install APKs itself: the
-  REQUEST_INSTALL_PACKAGES permission and the FileProvider are gone, since F-Droid
-  does not allow an app to install its own APKs. Nothing in the build switches the
-  app between channels, so one APK serves both GitHub and F-Droid.
+  in the browser. It does not download or install APKs itself, and nothing in the
+  build switches the app between channels, so one APK serves both GitHub and
+  F-Droid.
   The app contacts non-free network services for optional features: the VPN Gate
   public server list (vpngate.net) and IP geolocation providers (ipwho.is,
   ipapi.co, ip-api.com, api.ipify.org, icanhazip.com). The tunnel itself works
