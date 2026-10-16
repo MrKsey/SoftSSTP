@@ -13,15 +13,17 @@ RepoType: git
 Repo: https://github.com/MrKsey/SoftSSTP.git
 
 Builds:
-  - versionName: 1.6.1
-    versionCode: 131
-    commit: v1.6.1
+  - versionName: 1.6.2
+    versionCode: 141
+    commit: 7bba12b8a30c0ce0ae72ba2b90db352b7cfc5ce1
     subdir: SoftSSTP
     submodules: true
     sudo:
       - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+    binary:
+      https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-armeabi-v7a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -71,15 +73,17 @@ Builds:
       - cd $orig/SoftSSTP
     ndk: 28.2.13676358
 
-  - versionName: 1.6.1
-    versionCode: 132
-    commit: v1.6.1
+  - versionName: 1.6.2
+    versionCode: 142
+    commit: 7bba12b8a30c0ce0ae72ba2b90db352b7cfc5ce1
     subdir: SoftSSTP
     submodules: true
     sudo:
       - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+    binary:
+      https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-arm64-v8a.apk
     srclibs:
       - flutter@stable
     rm:
@@ -129,32 +133,35 @@ Builds:
       - cd $orig/SoftSSTP
     ndk: 28.2.13676358
 
+AllowedAPKSigningKeys: e755a91d46c619714a10b54e2f8b91eac71a92a4bf1be92d462701aadf2788c1
+
 MaintainerNotes: |-
   Version name and code come from SoftSSTP/pubspec.yaml (the number after "+").
   Every release bumps both and is tagged vX.Y.Z; the tag must match the pubspec
   version. Split APKs use versionCode * 10 + slot (armeabi-v7a = 1,
   arm64-v8a = 2), mirrored in VercodeOperation and in build.gradle.kts.
-  F-Droid builds the APK from source and signs it with its own key. The build is
-  not bit-for-bit reproducible against the GitHub release: the two toolchains
-  emit the same strings in libsoftether.so but in a different order, which moves
-  a 107 KB block inside .rodata, so the APK comparison that runs for a recipe
-  with a `binary` entry never settles. That is why there is no `binary` entry and
-  no AllowedAPKSigningKeys here. The upstream APK is signed with the maintainer's
-  key and will not install over an F-Droid build; switching between the two needs
-  a reinstall.
-  The native libraries are still built deterministically, which keeps rebuilds
-  comparable over time. OpenSSL is built with a fixed prefix, because OPENSSLDIR,
-  ENGINESDIR and MODULESDIR are compiled into libcrypto and the build directory
-  would otherwise leak into .rodata, and its build date is pinned through
-  SOURCE_DATE_EPOCH (the OpenSSL submodule commit date). The linker build-id is
-  dropped, since it hashes the debug info, which records the NDK path. The build
-  path matters for the same reason, so prebuild and build move the whole checkout
-  to /home/runner/work/SoftSSTP/SoftSSTP, the path actions/checkout uses on the
-  GitHub runner. The whole tree moves, not just the Flutter project: pubspec.yaml
-  pulls softether_flutter and sstp_flutter in as path dependencies from the
-  repository root, and Dart records their absolute paths, so the layout has to
-  match upstream as well. The Flutter project itself then sits at
-  /home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP.
+  The release workflow builds the split APKs and uploads them as
+  SoftSSTP-<version>-<abi>.apk, which is what `binary` points at, so the APK
+  published here is the upstream one, signed with the maintainer's key
+  (AllowedAPKSigningKeys).
+  F-Droid also builds the APK from source and compares the result with the
+  release, so both builds have to produce the same bytes. A few details keep them
+  identical. OpenSSL is built with a fixed prefix, because OPENSSLDIR, ENGINESDIR
+  and MODULESDIR are compiled into libcrypto and the build directory would
+  otherwise leak into .rodata. Its build date is a constant in the build script,
+  because mkbuildinf.pl bakes it into the "built on: ..." string, and the string
+  table in .rodata is ordered by content: a different date moves that string to a
+  different place and changes the section. It has to be a constant rather than
+  something derived, since fdroidserver exports SOURCE_DATE_EPOCH (the app
+  commit date) while GitHub Actions exports nothing. The linker build-id is
+  dropped for every native module, because it hashes the debug info, which
+  records the NDK path. The build path matters for the same reason, so prebuild
+  and build move the whole checkout to /home/runner/work/SoftSSTP/SoftSSTP, the
+  path actions/checkout uses on the GitHub runner. The whole tree moves, not just
+  the Flutter project: pubspec.yaml pulls softether_flutter and sstp_flutter in
+  as path dependencies from the repository root, and Dart records their absolute
+  paths, so the layout has to match upstream as well. The Flutter project itself
+  then sits at /home/runner/work/SoftSSTP/SoftSSTP/SoftSSTP.
   The SoftEther plugin builds OpenSSL (pinned submodule) from source during the
   Gradle build, so the buildserver needs bash and perl (both present) plus GNU
   make. make is added to PATH from the NDK's own prebuilt bin, since the
@@ -173,8 +180,9 @@ MaintainerNotes: |-
   the GitHub and the F-Droid build produce an APK without it.
   The app checks the GitHub release page for a newer version and opens that page
   in the browser. It does not download or install APKs itself: the
-  REQUEST_INSTALL_PACKAGES permission and the FileProvider are gone: F-Droid
-  does not allow an app to install its own APKs.
+  REQUEST_INSTALL_PACKAGES permission and the FileProvider are gone, since F-Droid
+  does not allow an app to install its own APKs. Nothing in the build switches the
+  app between channels, so one APK serves both GitHub and F-Droid.
   The app contacts non-free network services for optional features: the VPN Gate
   public server list (vpngate.net) and IP geolocation providers (ipwho.is,
   ipapi.co, ip-api.com, api.ipify.org, icanhazip.com). The tunnel itself works
@@ -186,5 +194,5 @@ VercodeOperation:
   - '%c * 10 + 1'
   - '%c * 10 + 2'
 UpdateCheckData: SoftSSTP/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
-CurrentVersion: 1.6.1
-CurrentVersionCode: 132
+CurrentVersion: 1.6.2
+CurrentVersionCode: 142
