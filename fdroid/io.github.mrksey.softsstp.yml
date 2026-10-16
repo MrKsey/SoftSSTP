@@ -22,7 +22,7 @@ Builds:
       - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
-    binary:
+    binary: 
       https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-armeabi-v7a.apk
     srclibs:
       - flutter@stable
@@ -82,7 +82,7 @@ Builds:
       - mkdir -p /home/runner/work/SoftSSTP
       - chown -R vagrant /home/runner/work/SoftSSTP
     output: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
-    binary:
+    binary: 
       https://github.com/MrKsey/SoftSSTP/releases/download/v%v/SoftSSTP-%v-arm64-v8a.apk
     srclibs:
       - flutter@stable
