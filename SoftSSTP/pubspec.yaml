@@ -1,7 +1,7 @@
 name: softsstp
 description: "SoftSSTP - Secure SSTP VPN Client"
 publish_to: 'none'
-version: 1.6.1+13
+version: 1.6.2+14
 
 environment:
   sdk: ^3.9.2

@@ -1,0 +1,1 @@
+Build-only update: the OpenSSL build date is pinned to a constant now, so the GitHub and the F-Droid build produce the same APK byte for byte and F-Droid ships the APK from the releases page instead of a rebuild. Nothing changes in the app itself.
