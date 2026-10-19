@@ -51,8 +51,11 @@ var assignedIp = ""
  * app can pull these on resume, so the total is never lost even if the
  * per-second push notifications were dropped while it was in the background.
  */
-var trafficTotalDownloadBits : Long = 0L
-var trafficTotalUploadBits : Long = 0L
+// Cumulative traffic totals in bits, refreshed by the terminal's traffic
+// reporter and read on demand by the app (getTrafficTotals). Volatile: written
+// on the reporter thread, read on the platform thread.
+@Volatile var trafficTotalDownloadBits : Long = 0L
+@Volatile var trafficTotalUploadBits : Long = 0L
 
 /**
  * Machine-readable reason and human readable explanation for the last failed
@@ -287,6 +290,10 @@ class SstpFlutterPlugin: FlutterPlugin, MethodCallHandler , ActivityAware, Flutt
             // Record the build the log came from: several test builds share the
             // same version name while the native library differs.
             ConnectionLog.append("LOG", "App version: ${ConnectionLog.appVersion()}")
+          } else {
+            // Release the buffered writer; nothing else will append until the
+            // flag is switched on again.
+            ConnectionLog.flushAndClose()
           }
         }
         result.success(true)
@@ -453,7 +460,13 @@ class SstpFlutterPlugin: FlutterPlugin, MethodCallHandler , ActivityAware, Flutt
     )
 
     setBooleanPrefValue(showDisconnectOnNotification ?: false,OscPrefKey.NOTIFICATION_DO_SHOW_DISCONNECT,prefs)
-    setBooleanPrefValue(useTrustedCert ?: false,OscPrefKey.SSL_DO_ADD_CERT,prefs)
+    // The imported certificate list is only usable when a directory was picked;
+    // without one, "Verify SSL Certificate" falls back to the system trust
+    // store, so the flag is only set when there is something to load.
+    setBooleanPrefValue(
+      (useTrustedCert ?: false) && getURIPrefValue(OscPrefKey.SSL_CERT_DIR, prefs) != null,
+      OscPrefKey.SSL_DO_ADD_CERT, prefs
+    )
 
     setStringPrefValue(
       sslVersion ?:"", OscPrefKey.SSL_VERSION,prefs

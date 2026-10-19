@@ -1,6 +1,7 @@
 package com.example.sstp_flutter.terminal
 
 import android.os.Build
+import android.os.SystemClock
 import android.util.Base64
 import androidx.documentfile.provider.DocumentFile
 import com.example.sstp_flutter.ConnectionLog
@@ -15,6 +16,7 @@ import com.example.sstp_flutter.preference.OscPrefKey
 import com.example.sstp_flutter.preference.accessor.*
 import com.example.sstp_flutter.unit.DataUnit
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +28,7 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.security.KeyStore
+import java.security.cert.CertificateException
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import javax.net.ssl.*
@@ -35,6 +38,13 @@ import javax.net.ssl.X509TrustManager
 
 private const val HTTP_DELIMITER = "\r\n"
 private const val HTTP_SUFFIX = "\r\n\r\n"
+
+// protect() of the tunnel socket can fail transiently: the right to call it is
+// silently revoked when another VPN app calls VpnService.prepare(). The socket
+// is then re-protected after our own prepare() takes the right back, up to
+// PROTECT_ATTEMPTS times (see ensureProtectRight and the connect() retry).
+private const val PROTECT_ATTEMPTS = 3
+private const val PROTECT_RETRY_DELAY_MS = 200L
 
 internal const val SSL_REQUEST_INTERVAL = 10_000L
 
@@ -85,11 +95,16 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
         }
     }
 
-    private fun createTrustManagers(): Array<TrustManager> {
-        val document = DocumentFile.fromTreeUri(
-            bridge.service,
-            getURIPrefValue(OscPrefKey.SSL_CERT_DIR, bridge.prefs)!!
-        )!!
+    /**
+     * Trust managers that accept a chain when EITHER the imported CA set or the
+     * system trust store accepts it: the profile's "Add Certificate" list is
+     * meant to make a private/self-signed server verifiable, not to lock out
+     * publicly trusted servers. Returns null when no usable certificates were
+     * imported, so the caller falls back to the system default context.
+     */
+    private fun createTrustManagers(): Array<TrustManager>? {
+        val dirUri = getURIPrefValue(OscPrefKey.SSL_CERT_DIR, bridge.prefs) ?: return null
+        val document = DocumentFile.fromTreeUri(bridge.service, dirUri) ?: return null
 
         val certFactory = CertificateFactory.getInstance("X.509")
         val keyStore = KeyStore.getDefaultType().let {
@@ -97,22 +112,52 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
         }
         keyStore.load(null, null)
 
+        var imported = 0
         for (file in document.listFiles()) {
-            if (file.isFile) {
-                val stream =
-                    BufferedInputStream(bridge.service.contentResolver.openInputStream(file.uri))
-                val ca = certFactory.generateCertificate(stream) as X509Certificate
-                keyStore.setCertificateEntry(file.name, ca)
-                stream.close()
+            if (!file.isFile) continue
+            try {
+                bridge.service.contentResolver.openInputStream(file.uri)?.use { stream ->
+                    val ca = certFactory.generateCertificate(stream) as X509Certificate
+                    keyStore.setCertificateEntry(file.name, ca)
+                    imported++
+                }
+            } catch (e: Exception) {
+                ConnectionLog.append("SSL", "Skipping certificate ${file.name}: ${e.message}")
             }
         }
+        if (imported == 0) return null
 
-        val tmFactory = TrustManagerFactory.getDefaultAlgorithm().let {
+        val customFactory = TrustManagerFactory.getDefaultAlgorithm().let {
             TrustManagerFactory.getInstance(it)
         }
-        tmFactory.init(keyStore)
+        customFactory.init(keyStore)
+        val custom = customFactory.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
+            ?: return null
 
-        return tmFactory.trustManagers
+        val systemFactory = TrustManagerFactory.getDefaultAlgorithm().let {
+            TrustManagerFactory.getInstance(it)
+        }
+        systemFactory.init(null as KeyStore?)
+        val system = systemFactory.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
+            ?: return arrayOf(custom)
+
+        val composite = object : X509TrustManager {
+            override fun getAcceptedIssuers(): Array<X509Certificate> =
+                system.acceptedIssuers + custom.acceptedIssuers
+
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
+                custom.checkClientTrusted(chain, authType)
+            }
+
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                try {
+                    custom.checkServerTrusted(chain, authType)
+                } catch (_: CertificateException) {
+                    system.checkServerTrusted(chain, authType)
+                }
+            }
+        }
+        return arrayOf(composite)
     }
 
     private suspend fun startHandshake(): Boolean {
@@ -128,15 +173,22 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
         )
 
         if (verifyCert) {
-            sslContext = if (addCert) {
+            val customTrust = if (addCert) createTrustManagers() else null
+            sslContext = if (customTrust != null) {
                 // "TLS" instead of a version-specific algorithm: a generic
                 // context exposes every protocol version (incl. TLS 1.3) and
                 // its cipher suites, while the negotiated version is limited
                 // below through enabledProtocols.
                 SSLContext.getInstance("TLS").also {
-                    it.init(null, createTrustManagers(), null)
+                    it.init(null, customTrust, null)
                 }
             } else {
+                if (addCert) {
+                    ConnectionLog.append(
+                        "SSL",
+                        "No usable imported certificates; verifying with the system trust store"
+                    )
+                }
                 SSLContext.getDefault()
             }
         } else {
@@ -174,7 +226,8 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
         ConnectionLog.append(
             "SSL",
             "Engine ready: protocols=${engine.enabledProtocols.joinToString()} " +
-                "enabledSuites=${engine.enabledCipherSuites.size}"
+                "enabledSuites=${engine.enabledCipherSuites.size} " +
+                "provider=${sslContext.provider.name}"
         )
 
         if (getBooleanPrefValue(OscPrefKey.SSL_DO_SELECT_SUITES, bridge.prefs)) {
@@ -206,14 +259,50 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
 
         val socketHostname = if (doUseProxy) getStringPrefValue(OscPrefKey.PROXY_HOSTNAME, bridge.prefs) else sslHostname
         val socketPort = if (doUseProxy) getIntPrefValue(OscPrefKey.PROXY_PORT, bridge.prefs) else sslPort
-        socket = Socket(socketHostname, socketPort).also {
+
+        // The tunnel's own connection must be created on a real (non-VPN)
+        // network. With another VPN up (e.g. AdGuard) a plain socket is created
+        // on that VPN's interface instead, and protect() does not always fix it —
+        // it returns false in that state (see the retry below).
+        val underlying = bridge.service.findUnderlyingNetwork()
+        socket = if (underlying != null) {
+            underlying.socketFactory.createSocket(socketHostname, socketPort) as Socket
+        } else {
+            Socket(socketHostname, socketPort)
+        }.also {
             socketInputStream = it.getInputStream()
             socketOutputStream = it.getOutputStream()
         }
-        // Exclude the handshake socket from any VPN (e.g. a stale tunnel from a
-        // previous session) so the TLS handshake always uses the real network.
-        bridge.service.protect(socket)
-        ConnectionLog.append("SSL", "TCP connected: ${socket!!.remoteSocketAddress}")
+        // Also protect it, so a VPN started later cannot capture the socket.
+        var protected = bridge.service.protect(socket)
+        var protectAttempts = 0
+        while (!protected && protectAttempts < PROTECT_ATTEMPTS) {
+            protectAttempts++
+            // protect() fails when the right has been revoked: the platform
+            // grants it to the app that last called VpnService.prepare(), and
+            // another VPN doing that (e.g. AdGuard bringing its protection
+            // back) takes it away from us. An unprotected tunnel socket is
+            // captured by our own TUN the moment it comes up, which leaves a
+            // session that reports "connected" but carries no traffic. Our own
+            // prepare() (the same call that claims the VPN slot) takes the
+            // right back, so retry after it.
+            if (!bridge.service.ensureProtectRight()) break
+            protected = bridge.service.protect(socket)
+            if (!protected) delay(PROTECT_RETRY_DELAY_MS)
+        }
+        ConnectionLog.append(
+            "SSL",
+            "TCP connected: ${socket!!.remoteSocketAddress} local=${socket!!.localSocketAddress}" +
+                " protected=$protected onUnderlyingNetwork=${underlying != null}" +
+                (if (protectAttempts > 0) " protectRetries=$protectAttempts" else "")
+        )
+        if (!protected) {
+            ConnectionLog.append(
+                "SSL",
+                "WARNING: tunnel socket left unprotected — the TUN may capture it"
+            )
+        }
+        bridge.service.logNetworkSnapshot("Socket created")
 
         if (doUseProxy) {
             if (!establishProxy()) {
@@ -445,6 +534,13 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
                             )
                         }
 
+                        if (readSize > 0) {
+                            // Any byte from the server proves the session is still
+                            // alive; the service's watchdog uses this timestamp to
+                            // tell a silent tunnel from a working one.
+                            bridge.lastIncomingAtMs = SystemClock.elapsedRealtime()
+                        }
+
                         inboundBuffer.limit(inboundBuffer.limit() + readSize)
                     } catch (_: SocketTimeoutException) { }
                 }
@@ -509,6 +605,13 @@ internal class SSLTerminal(private val bridge: ClientBridge) {
 
     internal fun close() {
         jobInitialize?.cancel()
+        try {
+            ConnectionLog.append(
+                "SSL",
+                "Closing socket ${socket?.localSocketAddress} -> ${socket?.remoteSocketAddress}"
+            )
+        } catch (_: Exception) {
+        }
         socket?.close()
     }
 }

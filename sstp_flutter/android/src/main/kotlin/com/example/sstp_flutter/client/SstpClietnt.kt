@@ -210,6 +210,15 @@ internal class SstpClient(val bridge: ClientBridge) {
         bridge.sslTerminal!!.sendDataUnit(call)
     }
 
+    /**
+     * Sends an SSTP echo request. The peer answers every echo request with an echo
+     * response, so this is the protocol-level way to ask whether the session is
+     * still alive — no address or port of our own is involved.
+     */
+    internal suspend fun sendEchoRequest() {
+        bridge.sslTerminal?.sendDataUnit(SstpEchoRequest())
+    }
+
     internal suspend fun sendLastPacket(type: Short) {
         val packet = when (type) {
             SSTP_MESSAGE_TYPE_CALL_DISCONNECT ->{

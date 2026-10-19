@@ -3,6 +3,10 @@ import 'package:sstp_flutter/ssl_versions.dart';
 class SSTPAndroidConfiguration {
   final bool verifyHostName;
   final bool verifySSLCert;
+
+  /// When [verifySSLCert] is on, also trust the CA certificates imported
+  /// through "Add Certificate" (the picked directory), in addition to the
+  /// system trust store. Has no effect while [verifySSLCert] is off.
   final bool useTrustedCert;
   final bool showDisconnectOnNotification;
   final String notificationText;

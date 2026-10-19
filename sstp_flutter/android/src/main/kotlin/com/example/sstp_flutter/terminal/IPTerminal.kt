@@ -36,11 +36,6 @@ private const val TRAFFIC_REPORT_INTERVAL_MS = 1_000L
 // which blocks on the TUN read.
 private const val TRAFFIC_REPORT_INTERVAL_POWER_SAVE_MS = 3_000L
 
-// Screen off: the reporter keeps the byte counters current (so the app shows the
-// right figures the moment the screen comes back) but no longer touches the
-// Flutter channel or the foreground notification, and ticks far less often.
-private const val TRAFFIC_REPORT_INTERVAL_SCREEN_OFF_MS = 15_000L
-
 // `establish()` can return null on some devices when a previous TUN interface
 // has not been released yet. Retry a few times with a fresh builder before
 // giving up, so a transient failure does not abort the whole connection.
@@ -60,14 +55,16 @@ internal class IPTerminal(private val bridge: ClientBridge) {
     private val isCustomDNSServerUsed = getBooleanPrefValue(OscPrefKey.DNS_DO_USE_CUSTOM_SERVER, bridge.prefs)
     private val isCustomRoutesAdded = getBooleanPrefValue(OscPrefKey.ROUTE_DO_ADD_CUSTOM_ROUTES, bridge.prefs)
 
-    // Byte and packet counters are updated on the hot data path (one increment
-    // per packet) and read once per second by the reporter. AtomicLong keeps the
-    // increments cheap and correct without any locks. The packet counts feed the
-    // end-of-session summary only.
+    // Byte counters are updated on the hot data path (one increment per packet)
+    // and read once per second by the reporter. AtomicLong keeps the increments
+    // cheap and correct without any locks. The packet counts feed the
+    // end-of-session summary only: they are plain longs (each direction is
+    // incremented from its own single thread) and they are counted only while
+    // logging is enabled, so a disabled log costs nothing.
     private val totalDownloadBytes = AtomicLong(0)
     private val totalUploadBytes = AtomicLong(0)
-    private val totalDownloadPackets = AtomicLong(0)
-    private val totalUploadPackets = AtomicLong(0)
+    private var totalDownloadPackets = 0L
+    private var totalUploadPackets = 0L
 
     // Guards the one-shot end-of-session summary: close() is reached from several
     // teardown paths, and only the first one carries the real totals.
@@ -111,9 +108,13 @@ internal class IPTerminal(private val bridge: ClientBridge) {
             // The address the server assigned via IPCP, surfaced to the UI.
             // IPv4 is always preferred; IPv6 is reported only when IPv4 is off.
             bridge.PPP_IPv4_ENABLED -> {
-                FlutterCaller().sendAssignedIp(
-                    InetAddress.getByAddress(bridge.currentIPv4).hostAddress ?: ""
-                )
+                val assigned = InetAddress.getByAddress(bridge.currentIPv4).hostAddress ?: ""
+                // Logged because two sessions that come up with the same address
+                // are what a server-side stale session looks like: the address is
+                // handed out again while the server still routes it to the dead
+                // session, so the new tunnel carries no traffic.
+                ConnectionLog.append("IP", "Assigned IPv4: $assigned")
+                FlutterCaller().sendAssignedIp(assigned)
             }
             bridge.PPP_IPv6_ENABLED -> {
                 val ipv6 = ByteArray(16).also { // link local address
@@ -322,8 +323,8 @@ internal class IPTerminal(private val bridge: ClientBridge) {
     private fun resetTrafficCounters() {
         totalDownloadBytes.set(0)
         totalUploadBytes.set(0)
-        totalDownloadPackets.set(0)
-        totalUploadPackets.set(0)
+        totalDownloadPackets = 0L
+        totalUploadPackets = 0L
         trafficTotalDownloadBits = 0L
         trafficTotalUploadBits = 0L
     }
@@ -343,8 +344,8 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         sessionEndLogged = true
         ConnectionLog.append(
             "PHASE",
-            "Session stopped — session ended (tx=${totalUploadPackets.get()}p/${uploadBytes}B " +
-                "rx=${totalDownloadPackets.get()}p/${downloadBytes}B)"
+            "Session stopped — session ended (tx=${totalUploadPackets}p/${uploadBytes}B " +
+                "rx=${totalDownloadPackets}p/${downloadBytes}B)"
         )
     }
 
@@ -364,9 +365,11 @@ internal class IPTerminal(private val bridge: ClientBridge) {
         outputStream?.write(buffer.array(), start, size)
         if (size > 0) {
             totalDownloadBytes.addAndGet(size.toLong())
-            totalDownloadPackets.incrementAndGet()
+            // Counted for the end-of-session summary only; skip it entirely
+            // while the log is off.
+            if (ConnectionLog.enabled) totalDownloadPackets++
             // Screen off: keep the CPU up while data is actually moving.
-            bridge.service.noteDataActivity()
+            bridge.service.noteDataActivity(size)
         }
     }
 
@@ -378,8 +381,8 @@ internal class IPTerminal(private val bridge: ClientBridge) {
 
         if (bytesRead > 0) {
             totalUploadBytes.addAndGet(bytesRead.toLong())
-            totalUploadPackets.incrementAndGet()
-            bridge.service.noteDataActivity()
+            if (ConnectionLog.enabled) totalUploadPackets++
+            bridge.service.noteDataActivity(bytesRead)
         }
     }
 
@@ -399,10 +402,19 @@ internal class IPTerminal(private val bridge: ClientBridge) {
 
         trafficJob = bridge.service.scope.launch {
             while (isActive) {
-                // Sleep until the next tick, or wake up at once when the screen
-                // comes back — a long idle interval must not delay the first
-                // update the user sees after unlocking the device.
-                withTimeoutOrNull(trafficReportIntervalMs()) {
+                // While the screen is off nobody can see the app or the
+                // notification, so the loop parks on the wake-up channel instead
+                // of ticking: no periodic counter reads, no MethodChannel work,
+                // no notification refresh. The screen-on event wakes it at once,
+                // so the figures are current the moment the screen comes back.
+                if (bridge.service.isScreenInteractive) {
+                    // Sleep until the next tick, or wake up at once when the
+                    // screen comes back — a long idle interval must not delay the
+                    // first update the user sees after unlocking the device.
+                    withTimeoutOrNull(trafficReportIntervalMs()) {
+                        screenWakeUp.receive()
+                    }
+                } else {
                     screenWakeUp.receive()
                 }
 
@@ -429,19 +441,22 @@ internal class IPTerminal(private val bridge: ClientBridge) {
                 val totalDownloadBits = totalDownload * 8
                 val totalUploadBits = totalUpload * 8
 
-                // Updated even while the screen is off: the app reads these on
-                // demand, so they must be current when it comes back.
+                // Read on demand by the app (getTrafficTotals). Refreshed on
+                // every tick, and the first tick after the screen comes back
+                // happens before anything is sent, so the values are current
+                // by the time the app can see them.
                 trafficTotalDownloadBits = totalDownloadBits
                 trafficTotalUploadBits = totalUploadBits
 
-                // With the screen off nobody can see the app or the notification,
-                // so the MethodChannel calls and the notification refresh are
-                // skipped entirely (this is the per-second work that used to keep
-                // waking the CPU for nothing).
+                // The screen may have turned off while the loop was waking up.
                 if (!bridge.service.isScreenInteractive) continue
 
-                FlutterCaller().DownloadSpeed(downloadBps, totalDownloadBits)
-                FlutterCaller().UploadSpeed(uploadBps, totalUploadBits)
+                FlutterCaller().TrafficUpdate(
+                    downloadBps,
+                    uploadBps,
+                    totalDownloadBits,
+                    totalUploadBits,
+                )
                 bridge.service.updateTrafficNotification(downloadBps, uploadBps)
             }
         }
@@ -455,14 +470,10 @@ internal class IPTerminal(private val bridge: ClientBridge) {
     }
 
     /**
-     * Traffic report cadence. Read on every tick so toggling the energy-saving
-     * switch takes effect without reconnecting, and so the screen state is
-     * honoured as soon as it changes.
+     * Traffic report cadence while the screen is on. Read on every tick so
+     * toggling the energy-saving switch takes effect without reconnecting.
      */
     private fun trafficReportIntervalMs(): Long {
-        if (!bridge.service.isScreenInteractive) {
-            return TRAFFIC_REPORT_INTERVAL_SCREEN_OFF_MS
-        }
         return if (getBooleanPrefValue(OscPrefKey.POWER_SAVING, bridge.prefs)) {
             TRAFFIC_REPORT_INTERVAL_POWER_SAVE_MS
         } else {

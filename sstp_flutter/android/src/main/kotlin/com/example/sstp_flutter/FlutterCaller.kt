@@ -78,20 +78,25 @@ fun connect(){
         invoke("assignedIp", tempMap)
     }
 
-    suspend fun DownloadSpeed(downloadSpeed : Long, totalDownload : Long){
+    /**
+     * Reports the current transfer rates and the cumulative totals as a single
+     * event. One call carries both directions and the totals, so a tick can
+     * never be split between two MethodChannel calls (which the UI showed as a
+     * one-sided or zero reading), and every figure belongs to the same
+     * measurement.
+     */
+    suspend fun TrafficUpdate(
+        downloadBps: Long,
+        uploadBps: Long,
+        totalDownloadBits: Long,
+        totalUploadBits: Long,
+    ) {
         try {
             withContext(Dispatchers.Main) {
-                flutterChannel.invokeMethod("downloadSpeed",listOf(downloadSpeed, totalDownload) )
-            }
-        } catch (_: Throwable) {
-            // Reporting traffic must never break the running tunnel.
-        }
-    }
-
-    suspend fun UploadSpeed(uploadSpeed : Long, totalUpload : Long){
-        try {
-            withContext(Dispatchers.Main) {
-                flutterChannel.invokeMethod("uploadSpeed", listOf(uploadSpeed, totalUpload))
+                flutterChannel.invokeMethod(
+                    "trafficUpdate",
+                    listOf(downloadBps, uploadBps, totalDownloadBits, totalUploadBits),
+                )
             }
         } catch (_: Throwable) {
             // Reporting traffic must never break the running tunnel.

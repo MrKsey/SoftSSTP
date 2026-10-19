@@ -39,6 +39,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 
 
+// Upper bound on the best-effort SSTP disconnect sent when a deferred session is
+// released. The socket may be in a state where the write cannot complete, and
+// the reconnect must not wait on it.
+private const val RELEASE_SOCKET_TIMEOUT_MS = 2_000L
+
+
 internal class ControlClient(internal val bridge: ClientBridge) {
     private var observer: NetworkObserver? = null
 
@@ -278,6 +284,10 @@ internal class ControlClient(internal val bridge: ClientBridge) {
 
             ConnectionLog.append("PHASE", "Connection established")
 
+            // Seed the watchdog's silence clock: from here on, a long gap without
+            // any byte from the server means the tunnel stopped carrying traffic.
+            bridge.lastIncomingAtMs = android.os.SystemClock.elapsedRealtime()
+
             // Mirror the state on the home screen in the foreground notification.
             bridge.service.updateNotificationStatus(CONNECTION_STATUS_CONNECTED)
             // A healthy tunnel resets the network-reconnect budget.
@@ -406,7 +416,7 @@ internal class ControlClient(internal val bridge: ClientBridge) {
      * service cancelled on teardown, leaking the TUN interface and making the
      * next establish() return null.
      */
-    internal fun shutdown() {
+    internal fun shutdown(keepSocket: Boolean = false) {
         // Mark first: any in-flight write to the revoked TUN will fail asynchronously
         // and must be ignored instead of tearing the service down.
         abandoned = true
@@ -414,7 +424,70 @@ internal class ControlClient(internal val bridge: ClientBridge) {
         observer = null
         jobMain?.cancel()
         cancelClients()
-        closeTerminals()
+        if (keepSocket) {
+            // The TUN must go (the interface has to be released while the tunnel
+            // is parked), but the socket is kept: closing it is what tells the
+            // server the session is over, and that close is useless while there
+            // is no network (see releaseSocket and SstpVpnService.pendingTeardown).
+            bridge.ipTerminal?.stopTrafficReporting()
+            bridge.ipTerminal?.close()
+        } else {
+            closeTerminals()
+        }
+    }
+
+    /**
+     * Time of the last byte received from the server, on the monotonic clock.
+     * Zero until the first byte arrives in this session.
+     */
+    internal fun lastIncomingAtMs(): Long = bridge.lastIncomingAtMs
+
+    /**
+     * Sends an SSTP echo request. The peer answers it with an echo response, so it
+     * is how the service's watchdog asks a quiet session whether it is still alive
+     * (see SstpVpnService.startTunnelWatchdog).
+     */
+    internal suspend fun sendEchoProbe() {
+        sstpClient?.sendEchoRequest()
+    }
+
+    /**
+     * Closes the socket of a session whose teardown was deferred, without the
+     * graceful disconnect. Used when the release cannot wait (service stopping).
+     */
+    internal fun closeSocket() {
+        bridge.sslTerminal?.close()
+    }
+
+    /**
+     * Releases the SSL socket of a session whose teardown was deferred until a
+     * network was available again. Sends the SSTP disconnect first so the server
+     * drops the session at the protocol level as well, then closes the socket.
+     */
+    internal suspend fun releaseSocket() {
+        val client = sstpClient
+        if (client == null) {
+            ConnectionLog.append("SERVICE", "Stopped session has no SSTP client; closing socket")
+            bridge.sslTerminal?.close()
+            return
+        }
+        try {
+            val sent = withTimeoutOrNull(RELEASE_SOCKET_TIMEOUT_MS) {
+                client.sendLastPacket(SSTP_MESSAGE_TYPE_CALL_DISCONNECT)
+                true
+            }
+            ConnectionLog.append(
+                "SERVICE",
+                if (sent == true) "Disconnect sent to the stopped session"
+                else "Disconnect to the stopped session timed out"
+            )
+        } catch (e: Throwable) {
+            ConnectionLog.append(
+                "SERVICE",
+                "Disconnect to the stopped session failed: ${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+        bridge.sslTerminal?.close()
     }
 
     internal fun kill(isReconnectionRequested: Boolean, cleanup: (suspend () -> Unit)?) {

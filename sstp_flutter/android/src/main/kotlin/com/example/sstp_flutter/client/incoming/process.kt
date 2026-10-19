@@ -1,5 +1,6 @@
 package com.example.sstp_flutter.client.incoming
 
+import com.example.sstp_flutter.ConnectionLog
 import com.example.sstp_flutter.client.ControlMessage
 import com.example.sstp_flutter.client.Result
 import com.example.sstp_flutter.client.Where
@@ -108,7 +109,24 @@ internal suspend fun IncomingClient.processControlPacket(type: Short, buffer: By
         return false
     }
 
-    sstpMailbox?.send(packet)
+    // TEMPORARY diagnostics: SSTP echo traffic proves the SSL session itself is
+    // still alive, which is what makes a dead tunnel hard to tell from an idle
+    // one (see the PPP echo below). Skipped entirely while logging is off.
+    if (ConnectionLog.enabled &&
+        (type == SSTP_MESSAGE_TYPE_ECHO_REQUEST || type == SSTP_MESSAGE_TYPE_ECHO_RESPONSE)
+    ) {
+        ConnectionLog.append(
+            "ECHO",
+            "SSTP echo ${if (type == SSTP_MESSAGE_TYPE_ECHO_REQUEST) "request" else "response"} in"
+        )
+    }
+
+    val mailbox = sstpMailbox
+    if (mailbox == null) {
+        diag { "SSTP control type=$type DROPPED (mailbox unregistered)" }
+    } else {
+        mailbox.send(packet)
+    }
 
     return true
 }
@@ -127,7 +145,12 @@ internal suspend fun IncomingClient.processLcpFrame(code: Byte, buffer: ByteBuff
             return false
         }
 
-        lcpMailbox?.send(configureFrame)
+        val mailbox = lcpMailbox
+        if (mailbox == null) {
+            diag { "LCP cfg code=$code id=${configureFrame.id} DROPPED (mailbox unregistered)" }
+        } else {
+            mailbox.send(configureFrame)
+        }
         return true
     }
 
@@ -147,7 +170,23 @@ internal suspend fun IncomingClient.processLcpFrame(code: Byte, buffer: ByteBuff
             return false
         }
 
-        pppMailbox?.send(frame)
+        // TEMPORARY diagnostics: an LCP echo reply answers our own echo request,
+        // so it shows whether the peer still processes this session even when no
+        // IP traffic comes back. Skipped entirely while logging is off.
+        if (ConnectionLog.enabled && (code == LCP_CODE_ECHO_REQUEST || code == LCP_CODE_ECHO_REPLY)) {
+            ConnectionLog.append(
+                "ECHO",
+                "LCP echo ${if (code == LCP_CODE_ECHO_REQUEST) "request" else "reply"} " +
+                    "in id=${frame.id}"
+            )
+        }
+
+        val mailbox = pppMailbox
+        if (mailbox == null) {
+            diag { "LCP code=$code id=${frame.id} DROPPED (mailbox unregistered)" }
+        } else {
+            mailbox.send(frame)
+        }
         return true
     }
 
@@ -222,7 +261,12 @@ internal suspend fun IncomingClient.processIpcpFrame(code: Byte, buffer: ByteBuf
         return false
     }
 
-    ipcpMailbox?.send(frame)
+    val mailbox = ipcpMailbox
+    if (mailbox == null) {
+        diag { "IPCP code=$code id=${frame.id} DROPPED (mailbox unregistered)" }
+    } else {
+        mailbox.send(frame)
+    }
     return true
 }
 
@@ -270,7 +314,15 @@ internal suspend fun IncomingClient.processIPPacket(isEnabledProtocol: Boolean, 
         val start = buffer.position() + 8
         val ipPacketSize = packetSize - 8
 
-        bridge.ipTerminal!!.writePacket(start, ipPacketSize, buffer)
+        val terminal = bridge.ipTerminal
+        if (terminal == null) {
+            diag { "IP rx size=$packetSize DROPPED (ipTerminal not ready)" }
+        } else {
+            diagIpPacket(start, ipPacketSize, buffer)
+            terminal.writePacket(start, ipPacketSize, buffer)
+        }
+    } else {
+        diag { "IP rx size=$packetSize DROPPED (protocol disabled)" }
     }
 
     buffer.move(packetSize)

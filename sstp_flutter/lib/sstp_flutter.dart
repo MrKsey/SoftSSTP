@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:sstp_flutter/src/core/Utils/utils.dart';
@@ -25,11 +23,18 @@ typedef OnReconnecting = void Function(String message);
 typedef OnConnectionError = void Function(String code, String message);
 
 class SstpFlutter {
-  Timer? _timer;
+  // Last figures reported by the native side. Native is the single source of
+  // the traffic figures: every "trafficUpdate" event is a fresh measurement, so
+  // the UI never shows an interpolated zero between two ticks.
   int _downloadSpeed = 0;
   int _uploadSpeed = 0;
   int _totalDownload = 0;
   int _totalUpload = 0;
+
+  /// Wall-clock time the connection was reported as established, used to derive
+  /// the session uptime for each traffic update.
+  int _connectedAtMs = 0;
+
   String _assignedIp = "";
   MethodChannelSstpFlutter channelHandler = MethodChannelSstpFlutter();
   OnConnected? onConnectedResult;
@@ -62,19 +67,19 @@ class SstpFlutter {
 
       if (call.method == 'connectResponse') {
         if (arg["status"] == SSTPConnectionStatusKeys.CONNECTED) {
-          _startConnectedTimer();
+          _connectedAtMs = DateTime.now().millisecondsSinceEpoch;
           onConnectedResult!(ConnectionTraffic(), Duration.zero);
         } else if (arg["status"] == SSTPConnectionStatusKeys.CONNECTING) {
-          _stopConnectedTimer();
+          _resetTraffic();
           _assignedIp = "";
           onConnectingResult!();
         } else if (arg["status"] == SSTPConnectionStatusKeys.RECONNECTING) {
-          _stopConnectedTimer();
+          _resetTraffic();
           _assignedIp = "";
           onReconnectingResult
               ?.call((arg["message"] as String?) ?? "Reconnecting...");
         } else if (arg["status"] == SSTPConnectionStatusKeys.DISCONNECTED) {
-          _stopConnectedTimer();
+          _resetTraffic();
           _assignedIp = "";
           onDisconnectedResult!();
           bool? error = arg["error"];
@@ -90,34 +95,18 @@ class SstpFlutter {
       } else if (call.method == 'assignedIp') {
         _assignedIp = (arg["ip"] as String?) ?? "";
         onAssignedIpResult?.call(_assignedIp);
-      } else if (call.method == 'downloadSpeed') {
-        _downloadSpeed += call.arguments[0] as int;
-        _totalDownload = call.arguments[1] as int;
-      } else if (call.method == 'uploadSpeed') {
-        _uploadSpeed += call.arguments[0] as int;
-        _totalUpload = call.arguments[1] as int;
-      }
-    }
-
-    channel.setMethodCallHandler(methodCallReceiver);
-  }
-
-  void _stopConnectedTimer() {
-    _timer?.cancel();
-    _timer = null;
-    _downloadSpeed = 0;
-    _uploadSpeed = 0;
-    _totalDownload = 0;
-    _totalUpload = 0;
-  }
-
-  void _startConnectedTimer({int baseSeconds = 0}) {
-    // Never keep two timers alive: onResult and checkLastConnectionStatus may
-    // both fire when the app is resumed while connected.
-    _timer?.cancel();
-    _timer = Timer.periodic(
-      const Duration(seconds: 1),
-      (timer) {
+      } else if (call.method == 'trafficUpdate') {
+        final args = call.arguments as List;
+        _downloadSpeed = (args[0] as num).toInt();
+        _uploadSpeed = (args[1] as num).toInt();
+        _totalDownload = (args[2] as num).toInt();
+        _totalUpload = (args[3] as num).toInt();
+        final at = _connectedAtMs;
+        final duration = at > 0
+            ? Duration(
+                milliseconds: DateTime.now().millisecondsSinceEpoch - at,
+              )
+            : Duration.zero;
         onConnectedResult?.call(
           ConnectionTraffic(
             totalDownloadTraffic: _totalDownload,
@@ -125,12 +114,22 @@ class SstpFlutter {
             downloadTraffic: _downloadSpeed,
             uploadTraffic: _uploadSpeed,
           ),
-          Duration(seconds: baseSeconds + timer.tick),
+          duration,
         );
-        _uploadSpeed = 0;
-        _downloadSpeed = 0;
-      },
-    );
+      }
+    }
+
+    channel.setMethodCallHandler(methodCallReceiver);
+  }
+
+  /// Drops the last reported figures. Used when the session ends or restarts,
+  /// so nothing from the previous session leaks into the new one.
+  void _resetTraffic() {
+    _downloadSpeed = 0;
+    _uploadSpeed = 0;
+    _totalDownload = 0;
+    _totalUpload = 0;
+    _connectedAtMs = 0;
   }
 
   /// Tries to take vpn permission.
@@ -279,25 +278,19 @@ class SstpFlutter {
   Future<String> checkLastConnectionStatus() async {
     String status = await channelHandler.checkLastConnectionStatus();
     if (status.toString() == SSTPConnectionStatusKeys.CONNECTED) {
-      // Preserve the elapsed time across app restarts/resumes by using the
-      // native connection start timestamp as the timer base.
-      int baseSeconds = 0;
+      // Re-anchor the uptime on the native connection start timestamp: the Dart
+      // anchor lives in memory and is lost when the Activity is recreated, so
+      // the session time would restart from zero on return.
       try {
         final startMillis = await channelHandler.getConnectionStartTime();
-        if (startMillis > 0) {
-          final elapsed =
-              (DateTime.now().millisecondsSinceEpoch - startMillis) ~/ 1000;
-          if (elapsed > 0) baseSeconds = elapsed;
-        }
+        if (startMillis > 0) _connectedAtMs = startMillis;
       } catch (_) {}
 
       try {
         _assignedIp = await channelHandler.getAssignedIp();
       } catch (_) {}
-
-      _startConnectedTimer(baseSeconds: baseSeconds);
     } else {
-      _stopConnectedTimer();
+      _resetTraffic();
     }
     return status;
   }

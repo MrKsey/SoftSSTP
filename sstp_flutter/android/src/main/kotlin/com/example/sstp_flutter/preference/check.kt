@@ -24,10 +24,9 @@ internal fun checkPreferences(prefs: SharedPreferences): String? {
     }
 
     val doAddCerts = getBooleanPrefValue(OscPrefKey.SSL_DO_ADD_CERT, prefs)
-    val version = getStringPrefValue(OscPrefKey.SSL_VERSION, prefs)
     val certDir = getURIPrefValue(OscPrefKey.SSL_CERT_DIR, prefs)
-    if (doAddCerts && version == "DEFAULT") return "Adding trusted certificates needs SSL version to be specified"
-
+    // The imported trust store works with any TLS version (including Auto), so
+    // only the directory is required.
     if (doAddCerts && certDir == null) return "No certificates directory was selected"
 
     val doSelectSuites = getBooleanPrefValue(OscPrefKey.SSL_DO_SELECT_SUITES, prefs)

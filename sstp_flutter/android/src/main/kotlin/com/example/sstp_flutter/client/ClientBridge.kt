@@ -126,6 +126,13 @@ internal class ClientBridge(internal val service: SstpVpnService) {
     internal val currentIPv6 = ByteArray(8)
     internal val currentProposedDNS = ByteArray(4)
 
+    // Monotonic time of the last byte read from the server's socket. A live
+    // session keeps the peer's echoes coming every few seconds, so a long silence
+    // is what a tunnel that no longer carries anything looks like. Written by the
+    // socket read path, read by the service's watchdog (see SstpVpnService).
+    @Volatile
+    internal var lastIncomingAtMs: Long = 0L
+
     internal val allowedApps: List<AppString> = mutableListOf<AppString>().also {
         if (getBooleanPrefValue(OscPrefKey.ROUTE_DO_ENABLE_APP_BASED_RULE, prefs)) {
             getValidAllowedAppInfos(prefs, service.packageManager).forEach { info ->

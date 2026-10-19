@@ -1,5 +1,7 @@
 package com.example.sstp_flutter.client.incoming
 
+import android.os.SystemClock
+import com.example.sstp_flutter.ConnectionLog
 import com.example.sstp_flutter.MAX_MRU
 import com.example.sstp_flutter.client.ClientBridge
 import com.example.sstp_flutter.client.ControlMessage
@@ -35,19 +37,113 @@ import com.example.sstp_flutter.unit.sstp.SSTP_PACKET_TYPE_CONTROL
 import com.example.sstp_flutter.unit.sstp.SSTP_PACKET_TYPE_DATA
 import com.example.sstp_flutter.unit.sstp.SstpEchoRequest
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
+import java.util.concurrent.Executors
 
 
 private const val SSTP_ECHO_INTERVAL = 20_000L
 private const val PPP_ECHO_INTERVAL = 20_000L
 
+// Rate limits of the TEMPORARY DIAG lines (see diag()).
+private const val DIAG_BURST_COUNT = 15
+private const val DIAG_EVERY_N = 200
+private const val DIAG_MIN_INTERVAL_MS = 1_000L
+
 internal class IncomingClient(internal val bridge: ClientBridge) {
     private val bufferSize = bridge.sslTerminal!!.getApplicationBufferSize() + MAX_MRU + 8 // MAX_MRU + 8 for fragment
 
     private var jobMain: Job? = null
+
+    // The whole receive path — socket read, TLS unwrap, framing, TUN write —
+    // runs as one loop on a dedicated thread: the loop blocks on the socket
+    // read, so keeping it off the shared pool avoids both pool contention and
+    // the resume-on-another-worker churn after every echo or control packet.
+    private val dispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "sstp-incoming")
+    }.asCoroutineDispatcher()
+
+    // TEMPORARY diagnostics: counts received frames so the log shows what the
+    // peer actually sends (protocol mix) without flooding the log file. The
+    // message is built lazily and, after the initial burst, DIAG lines are
+    // rate-limited to one per second: the counters keep advancing, but the hot
+    // path neither formats strings nor appends to the log file per packet.
+    private var diagCount = 0
+    private var lastDiagLogAtMs = 0L
+
+    /**
+     * Hot-path diagnostics. Inlined on purpose: with a non-inline lambda the
+     * closure object was allocated for every received packet even when the log
+     * was off, which showed up as GC pressure on a busy download. The inline
+     * wrapper checks the flag and the rate limit first, so a disabled log costs
+     * one volatile read and no allocation; the message is only built when a
+     * line is actually due.
+     */
+    internal inline fun diag(message: () -> String) {
+        if (!ConnectionLog.enabled) return
+        if (!diagDue()) return
+        ConnectionLog.append("DIAG", "#$diagCount ${message()}")
+    }
+
+    @PublishedApi
+    internal fun diagDue(): Boolean {
+        diagCount++
+        val inBurst = diagCount <= DIAG_BURST_COUNT
+        if (!inBurst && diagCount % DIAG_EVERY_N != 0) return false
+        if (!inBurst) {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastDiagLogAtMs < DIAG_MIN_INTERVAL_MS) return false
+            lastDiagLogAtMs = now
+        }
+        return true
+    }
+
+    // TEMPORARY diagnostics: the first incoming IPv4 packets are described in
+    // full (protocol, addresses, ports) so the log shows whether the server is
+    // actually answering the rebuilt session, and with what.
+    private var ipDiagCount = 0
+
+    internal fun diagIpPacket(start: Int, size: Int, buffer: ByteBuffer) {
+        // The packet is only parsed for the log; with logging off there is
+        // nothing to do here at all.
+        if (!ConnectionLog.enabled) return
+        if (ipDiagCount >= 20) return
+        ipDiagCount++
+        val array = buffer.array()
+        try {
+            val protocol = array[start + 9].toInt() and 0xFF
+            fun ip(offset: Int): String =
+                "${array[start + offset].toInt() and 0xFF}." +
+                    "${array[start + offset + 1].toInt() and 0xFF}." +
+                    "${array[start + offset + 2].toInt() and 0xFF}." +
+                    "${array[start + offset + 3].toInt() and 0xFF}"
+            val extra = when (protocol) {
+                6 -> {
+                    val srcPort = ((array[start + 20].toInt() and 0xFF) shl 8) or
+                        (array[start + 21].toInt() and 0xFF)
+                    val dstPort = ((array[start + 22].toInt() and 0xFF) shl 8) or
+                        (array[start + 23].toInt() and 0xFF)
+                    val flags = array[start + 33].toInt() and 0xFF
+                    "tcp ${ip(12)}:$srcPort->${ip(16)}:$dstPort flags=0x${"%02x".format(flags)}"
+                }
+                17 -> {
+                    val srcPort = ((array[start + 20].toInt() and 0xFF) shl 8) or
+                        (array[start + 21].toInt() and 0xFF)
+                    val dstPort = ((array[start + 22].toInt() and 0xFF) shl 8) or
+                        (array[start + 23].toInt() and 0xFF)
+                    "udp ${ip(12)}:$srcPort->${ip(16)}:$dstPort"
+                }
+                1 -> "icmp ${ip(12)}->${ip(16)} type=${array[start + 20].toInt() and 0xFF}"
+                else -> "proto=$protocol ${ip(12)}->${ip(16)}"
+            }
+            ConnectionLog.append("DIAG", "IP#${ipDiagCount} rx size=$size $extra")
+        } catch (_: Exception) {
+            ConnectionLog.append("DIAG", "IP#${ipDiagCount} rx size=$size (unparsed)")
+        }
+    }
 
     internal var lcpMailbox: Channel<LCPConfigureFrame>? = null
     internal var papMailbox: Channel<PAPFrame>? = null
@@ -59,6 +155,7 @@ internal class IncomingClient(internal val bridge: ClientBridge) {
 
     private val sstpTimer = EchoTimer(SSTP_ECHO_INTERVAL) {
         SstpEchoRequest().also {
+            if (ConnectionLog.enabled) ConnectionLog.append("ECHO", "SSTP echo request out")
             bridge.sslTerminal!!.sendDataUnit(it)
         }
     }
@@ -67,6 +164,9 @@ internal class IncomingClient(internal val bridge: ClientBridge) {
         LCPEchoRequest().also {
             it.id = bridge.allocateNewFrameID()
             it.holder = "Abura Mashi Mashi".toByteArray(Charsets.US_ASCII)
+            if (ConnectionLog.enabled) {
+                ConnectionLog.append("ECHO", "LCP echo request out id=${it.id}")
+            }
             bridge.sslTerminal!!.sendDataUnit(it)
         }
     }
@@ -98,7 +198,7 @@ internal class IncomingClient(internal val bridge: ClientBridge) {
     }
 
     internal fun launchJobMain() {
-        jobMain = bridge.service.scope.launch(bridge.handler) {
+        jobMain = bridge.service.scope.launch(bridge.handler + dispatcher) {
             val buffer = ByteBuffer.allocate(bufferSize).also { it.limit(0) }
 
             sstpTimer.tick()
@@ -163,14 +263,18 @@ internal class IncomingClient(internal val bridge: ClientBridge) {
 
                         val protocol = buffer.probeShort(6)
 
+                        diag { "DATA proto=0x${"%04x".format(protocol)} size=$size" }
+
 
                         // DATA
                         if (protocol == PPP_PROTOCOL_IP) {
+                            diag { "IP rx size=$size" }
                             processIPPacket(bridge.PPP_IPv4_ENABLED, size, buffer)
                             continue
                         }
 
                         if (protocol == PPP_PROTOCOL_IPv6) {
+                            diag { "IPv6 rx size=$size" }
                             processIPPacket(bridge.PPP_IPv6_ENABLED, size, buffer)
                             continue
                         }
@@ -193,6 +297,7 @@ internal class IncomingClient(internal val bridge: ClientBridge) {
                     }
 
                     SSTP_PACKET_TYPE_CONTROL -> {
+                        diag { "CTRL type=${buffer.probeShort(4)}" }
                         if (!processControlPacket(buffer.probeShort(4), buffer)) {
                             return@launch
                         }
@@ -220,5 +325,6 @@ internal class IncomingClient(internal val bridge: ClientBridge) {
 
     internal fun cancel() {
         jobMain?.cancel()
+        dispatcher.close()
     }
 }

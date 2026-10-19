@@ -55,9 +55,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -84,6 +87,8 @@ internal const val CONNECTION_STATUS_CONNECTED = "Connected"
 internal const val CONNECTION_STATUS_DISCONNECTED = "Disconnected"
 internal const val CONNECTION_STATUS_TAKEN_OVER = "Another VPN took over"
 internal const val CONNECTION_STATUS_NETWORK_CHANGED = "Network changed"
+internal const val CONNECTION_STATUS_WAITING_NETWORK = "Waiting for network"
+internal const val CONNECTION_STATUS_REBUILDING = "Rebuilding tunnel"
 
 // When the underlying network changes (Wi-Fi <-> mobile data) the SSTP socket
 // breaks. The service rebuilds the tunnel on the new network instead of staying
@@ -91,6 +96,12 @@ internal const val CONNECTION_STATUS_NETWORK_CHANGED = "Network changed"
 // debounced, and it is bounded so a flapping network cannot loop forever.
 private const val MAX_NETWORK_RECONNECT_ATTEMPTS = 3
 private const val NETWORK_CHANGE_DEBOUNCE_MS = 1_500L
+// With no network at all there is nothing to rebuild, so the service parks the
+// tunnel instead of stopping: it waits for an underlying network and then
+// reconnects on its own. The wait is event-driven (the network observer wakes it)
+// and this is only the fallback re-check, deliberately long so a parked tunnel
+// costs almost no battery.
+private const val NETWORK_WAIT_FALLBACK_MS = 30_000L
 // Window after a successful connect during which underlying-network changes are
 // ignored: the TUN setup/teardown itself reshapes the networks and must not be
 // mistaken for a real switch (see onUnderlyingNetworkChanged).
@@ -104,12 +115,42 @@ private const val NETWORK_SETTLE_MS = 10_000L
 // other one is up" behaviour. Bounded, so an always-on VPN cannot cause an
 // endless fight.
 private const val MAX_REVOKE_RECOVERY_ATTEMPTS = 5
+// Fallback quiet-stretch reset for the takeover budget: a takeover that is
+// followed by this much silence also counts as recovered. The main reset is a
+// successful reconnect (lastEstablishedAtMs moving past the revoke): AdGuard
+// re-prepares itself after every network switch, and counting those takeovers
+// against the budget made the tunnel give up even though every reclaim had
+// worked.
+private const val REVOKE_BUDGET_RESET_MS = 60_000L
 // How long to wait for the competing VPN to appear before reclaiming anyway.
 private const val WAIT_FOR_OTHER_VPN_TIMEOUT_MS = 20_000L
 // Extra pause after the competing VPN is detected, so its own startup (and the
 // initial handshake of its watchdog) finishes before we dethrone it.
 private const val OTHER_VPN_SETTLE_DELAY_MS = 2_000L
 private const val VPN_APPEAR_POLL_INTERVAL_MS = 500L
+
+// A session that is torn down while the device has no network keeps its socket
+// until a network is back (see pendingTeardown). Once it is released, the server
+// needs a moment to drop the old session before the new one is negotiated: if it
+// still holds the old session it also still routes that session's address to it,
+// and the rebuilt tunnel comes up "connected" but carries no traffic.
+private const val OLD_SESSION_RELEASE_SETTLE_MS = 1_000L
+
+// A tunnel can stay "connected" and carry nothing at all: the socket may have
+// been created on another VPN's interface and died with it, or the server may
+// still hold a stale session and route the address to that one. Nothing about it
+// surfaces as an error — the session just goes quiet. A live session, on the
+// other hand, is never quiet for long: the peer sends its own SSTP/LCP echoes
+// every few seconds, and that is what the watchdog below relies on.
+private const val TUNNEL_WATCH_INTERVAL_MS = 5_000L
+// Silence longer than this is what a dead tunnel looks like. Comfortably above
+// the peer's echo period (a few seconds), so a healthy tunnel never trips it.
+private const val TUNNEL_SILENCE_MS = 12_000L
+// Time given to the echo probe to be answered before the silence is counted.
+private const val TUNNEL_PROBE_GRACE_MS = 3_000L
+// Consecutive unanswered probes before the session is rebuilt. More than one, so
+// a slow moment on the network does not restart a working tunnel.
+private const val TUNNEL_MAX_FAILURES = 2
 
 // Screen off: instead of holding a partial wake lock for the whole session (the
 // CPU then never suspends, which is the biggest single battery drain of a tunnel
@@ -120,12 +161,20 @@ private const val VPN_APPEAR_POLL_INTERVAL_MS = 500L
 //     the PPP echo to go out on an otherwise idle tunnel.
 // The alarm interval is deliberately shorter than the 20 s echo interval.
 private const val SCREEN_OFF_WAKEUP_INTERVAL_MS = 15_000L
-private const val SCREEN_OFF_WAKE_LOCK_MS = 8_000L
+// Long enough for the keepalive exchange to complete (a few milliseconds on a
+// working link), short enough not to keep the CPU busy between alarms.
+private const val SCREEN_OFF_WAKE_LOCK_MS = 4_000L
 // Data path: how often the short wake lock is renewed while bytes are moving,
 // and how long it is held after the last packet. Renewing is throttled so a
 // busy tunnel does not touch the main handler for every packet.
 private const val DATA_ACTIVITY_REFRESH_MS = 1_000L
 private const val DATA_ACTIVITY_WAKE_LOCK_MS = 10_000L
+// Bytes that must pass within one refresh window before the screen-off wake
+// lock is renewed. Idle push/heartbeat packets (a few hundred bytes every few
+// seconds) used to renew it forever, so the CPU never suspended. The threshold
+// is above a background voice call's payload (~8-12 KB/s) so an idle phone does
+// not pin the CPU, and a real transfer clears it many times over.
+private const val DATA_ACTIVITY_MIN_BYTES = 16 * 1024
 // Request code of the screen-off wake-up alarm's PendingIntent.
 private const val WAKEUP_REQUEST_CODE = 42
 
@@ -138,6 +187,15 @@ internal class SstpVpnService : VpnService() {
     internal var logWriter: LogWriter? = null
     private var controlClient: ControlClient?  = null
 
+    // A session that was stopped because the underlying network disappeared,
+    // kept until a network is back. Its socket still has to be closed: closing it
+    // is the only thing that tells the server the session is over, and while the
+    // device is offline that close (an RST, because the server's frames were
+    // never read) is simply lost. The server then keeps the dead session — and
+    // the address it was given — so the tunnel rebuilt afterwards is connected
+    // but carries no traffic until the server's own session timeout expires.
+    private var pendingTeardown: ControlClient? = null
+
     private var jobReconnect: Job? = null
 
     // Pending slot-reclaim work started from onRevoke(). Cancelled when the user
@@ -149,6 +207,16 @@ internal class SstpVpnService : VpnService() {
     private var networkChangeObserver: NetworkChangeObserver? = null
     private var jobNetworkReconnect: Job? = null
     private var networkReconnectAttempts = 0
+    // Watches a live session for a tunnel that carries nothing (see
+    // startTunnelWatchdog).
+    private var jobTunnelWatchdog: Job? = null
+    // True while the tunnel is parked because the device has no network at all.
+    // The service stays alive (and foreground) but does no work: no session, no
+    // wake lock, no periodic alarm. A network appearing resumes the rebuild.
+    @Volatile
+    private var waitingForNetwork = false
+    // Wakes the parked rebuild the moment the observer reports a network.
+    private val networkWaitWakeup = Channel<Unit>(Channel.CONFLATED)
     // Monotonic time of the last successful connect, used for the settle window.
     @Volatile
     private var lastEstablishedAtMs = 0L
@@ -165,13 +233,20 @@ internal class SstpVpnService : VpnService() {
     private var notificationSpeed: String = ""
     private var notificationBaseText: String = "SoftSSTP VPN"
 
-    // Number of times we have reclaimed the slot after being revoked by another
-    // VPN. Reset on every user-initiated connect/disconnect.
+    // Number of *consecutive* takeovers we could not recover from. A takeover
+    // counts as recovered when the tunnel comes back up after it (see
+    // lastEstablishedAtMs) or when a quiet stretch follows (see
+    // REVOKE_BUDGET_RESET_MS); only an unrecovered streak spends the budget.
+    // Reset on every user-initiated connect/disconnect. A VPN that keeps
+    // nudging us but loses every reclaim must not use the budget up over a
+    // long session.
     private var revokeRecoveryAttempts = 0
+    // Monotonic time of the last revoke, used to reset the budget above.
+    private var lastRevokeAtMs = 0L
 
-    // Held for the whole lifetime of a tunnel. Without it the CPU is free to
-    // suspend while the screen is off, which stalls the SSTP keepalive and the
-    // PPP timers until the server drops the session.
+    // Held only while the screen is off and the tunnel has work to do. With the
+    // screen on the platform already keeps the CPU up, so taking a lock there
+    // only inflated the power report without changing anything.
     private var wakeLock: PowerManager.WakeLock? = null
 
     // Screen state. The tunnel itself does not depend on it, but everything that
@@ -191,6 +266,8 @@ internal class SstpVpnService : VpnService() {
     private var wakeUpPendingIntent: PendingIntent? = null
     private val releaseIdleWakeLock = Runnable { releaseWakeLockIfScreenOff() }
     private var lastDataActivityMs = 0L
+    // Bytes seen since the last wake-lock renewal (see noteDataActivity).
+    private var dataBytesSinceRenew = 0
 
     private fun setRootState(state: Boolean) {
         setBooleanPrefValue(state, OscPrefKey.ROOT_STATE, prefs)
@@ -305,12 +382,22 @@ internal class SstpVpnService : VpnService() {
         // the socket read timeout for the new state.
         controlClient?.onScreenStateChanged(interactive)
 
-        if (interactive) {
-            // The tunnel is visible again: keep the CPU up and stop the periodic
-            // wake-ups.
+        // Parked with no network: there is no session to keep alive, so the
+        // screen state changes nothing — and arming the periodic keepalive alarm
+        // here would wake the CPU every 15 s for nothing.
+        if (waitingForNetwork) {
             cancelScreenOffWakeUps()
             mainHandler.removeCallbacks(releaseIdleWakeLock)
-            if (controlClient != null) acquireWakeLock()
+            releaseWakeLock()
+            return
+        }
+
+        if (interactive) {
+            // The screen is on, so the platform keeps the CPU up by itself:
+            // drop the screen-off lock and stop the periodic wake-ups.
+            cancelScreenOffWakeUps()
+            mainHandler.removeCallbacks(releaseIdleWakeLock)
+            releaseWakeLock()
         } else {
             // Let the CPU suspend. The data path renews a short wake lock while
             // bytes are moving and the periodic alarm wakes it for the keepalive.
@@ -323,13 +410,16 @@ internal class SstpVpnService : VpnService() {
     /**
      * Keeps a short wake lock alive while the screen is off and bytes are moving,
      * so an active transfer is not throttled by the CPU suspending. Called from
-     * the data path once per packet; the renewal is throttled so the main handler
-     * stays out of the per-packet path.
+     * the data path once per packet; the renewal is throttled and requires a
+     * minimum amount of traffic, so idle heartbeats do not pin the CPU forever.
      */
-    internal fun noteDataActivity() {
+    internal fun noteDataActivity(bytes: Int = 0) {
         if (isScreenInteractive) return
+        dataBytesSinceRenew += bytes
         val now = SystemClock.elapsedRealtime()
         if (now - lastDataActivityMs < DATA_ACTIVITY_REFRESH_MS) return
+        if (dataBytesSinceRenew < DATA_ACTIVITY_MIN_BYTES) return
+        dataBytesSinceRenew = 0
         lastDataActivityMs = now
         acquireWakeLock()
         mainHandler.removeCallbacks(releaseIdleWakeLock)
@@ -386,6 +476,20 @@ internal class SstpVpnService : VpnService() {
         // that is a reconnect, not a user-initiated disconnect.
         val action = intent?.action ?: ACTION_VPN_CONNECT
 
+        // Android kills the process when startForegroundService() is not followed
+        // by startForeground() within about five seconds. The connect path below
+        // only reaches startForeground() after the tunnel is negotiated — TLS plus
+        // PPP easily takes longer — so a start request that arrives while the app
+        // is in the background (the system restarting the START_STICKY service, for
+        // one) killed the process here with
+        // ForegroundServiceDidNotStartInTimeException. Showing the notification
+        // first thing meets the deadline and gives the tunnel its foreground
+        // status from the very first moment, which also keeps the system from
+        // killing a started-but-not-foreground service in the background.
+        if (action == ACTION_VPN_CONNECT) {
+            beForegrounded()
+        }
+
         return when (action) {
             ACTION_VPN_CONNECT -> {
                 // Every connect request clears the manual-disconnect flag.
@@ -411,37 +515,28 @@ internal class SstpVpnService : VpnService() {
                 // A user-initiated connect resets the takeover budget and
                 // cancels any pending slot-reclaim work.
                 revokeRecoveryAttempts = 0
+                lastRevokeAtMs = 0L
                 jobRevokeRecovery?.cancel()
                 jobRevokeRecovery = null
                 networkReconnectAttempts = 0
                 jobNetworkReconnect?.cancel()
                 jobNetworkReconnect = null
-                // Release the previous session's TUN interface synchronously
-                // before creating a new one. Doing it asynchronously raced with
-                // this new session and made establish() return null.
-                controlClient?.shutdown()
-                controlClient = null
-
-                notificationStatus = CONNECTION_STATUS_CONNECTING
-                notificationSpeed = ""
-                beForegrounded()
-                acquireWakeLock()
-                // A connect that happens with the screen already off (auto-connect,
-                // quick-settings tile) must not keep the CPU up for the whole
-                // session: the receiver only reports changes, so apply the
-                // screen-off policy here as well.
-                if (!isScreenInteractive) onScreenStateChanged(false)
-                resetReconnectionLife(prefs)
-                // A new attempt clears any previous failure.
-                connectionErrorCode = ""
-                connectionErrorMessage = ""
-                if (getBooleanPrefValue(OscPrefKey.LOG_DO_SAVE_LOG, prefs)) {
-                    prepareLogWriter()
-                }
 
                 logWriter?.write("Establish VPN connection")
 
-                initializeClient()
+                // A session parked by an earlier network loss still holds its
+                // socket: release it before the new one is negotiated, so the
+                // server is not still holding the old session when this one
+                // comes up (see pendingTeardown). Without a network the close
+                // would be lost again, so the release stays deferred.
+                if (pendingTeardown != null && hasUnderlyingNetwork()) {
+                    scope.launch {
+                        if (releasePendingTeardown()) delay(OLD_SESSION_RELEASE_SETTLE_MS)
+                        initializeClient()
+                    }
+                } else {
+                    initializeClient()
+                }
 
                 setRootState(true)
 
@@ -453,7 +548,10 @@ internal class SstpVpnService : VpnService() {
                 // of CPU time for the keepalive/echo, then let it suspend again.
                 if (!isScreenInteractive &&
                     connectionStatus == OscPrefKey.Connected.name &&
-                    !manuallyDisconnected
+                    !manuallyDisconnected &&
+                    // A parked tunnel has nothing to keep alive, and re-arming the
+                    // alarm here would defeat the whole point of the pause.
+                    !waitingForNetwork
                 ) {
                     acquireWakeLock()
                     mainHandler.removeCallbacks(releaseIdleWakeLock)
@@ -462,9 +560,25 @@ internal class SstpVpnService : VpnService() {
                     scheduleScreenOffWakeUps()
                     Service.START_STICKY
                 } else {
-                    // Nothing to keep alive (tunnel down or screen back on).
+                    // Nothing to keep alive (tunnel down, parked, or screen back on).
                     cancelScreenOffWakeUps()
-                    if (connectionStatus != OscPrefKey.Connected.name) stopSelf()
+                    // A rebuild in progress owns the service: it must survive until
+                    // the new session is up. Stopping here killed the service in the
+                    // middle of a rebuild, because the state is neither "Connected"
+                    // nor parked while the tunnel is being rebuilt.
+                    val isRebuilding = isNetworkReconnectPending() || isRevokeRecoveryPending()
+                    // Only an explicit disconnect ends the service here. A
+                    // "Connecting"/"Reconnecting" state also owns the service: the
+                    // rebuild coroutines are already done by then (initializeClient()
+                    // is their last step) and the session is being negotiated, so
+                    // isRebuilding is false — this alarm used to kill the service in
+                    // the middle of a network reconnect, leaving the tunnel down.
+                    if (connectionStatus == OscPrefKey.Disconnected.name &&
+                        !waitingForNetwork &&
+                        !isRebuilding
+                    ) {
+                        stopSelf()
+                    }
                     Service.START_NOT_STICKY
                 }
             }
@@ -474,11 +588,13 @@ internal class SstpVpnService : VpnService() {
                 // user-initiated disconnect.
                 manuallyDisconnected = true
                 revokeRecoveryAttempts = 0
+                lastRevokeAtMs = 0L
                 jobRevokeRecovery?.cancel()
                 jobRevokeRecovery = null
                 networkReconnectAttempts = 0
                 jobNetworkReconnect?.cancel()
                 jobNetworkReconnect = null
+                waitingForNetwork = false
                 ConnectionLog.append("SERVICE", "Disconnect requested")
                 connectionStatus = OscPrefKey.Disconnected.name
                 connectionStartTime = 0L
@@ -491,6 +607,7 @@ internal class SstpVpnService : VpnService() {
                 // otherwise cancel before it released the descriptor.
                 controlClient?.shutdown()
                 controlClient = null
+                dropPendingTeardown()
 
                 close()
 
@@ -513,6 +630,19 @@ internal class SstpVpnService : VpnService() {
     }
 
     private fun initializeClient() {
+        // Only one session may exist at a time. Two restart paths call this (the
+        // network-reconnect and the slot-reclaim coroutines) and they overlap in
+        // practice — losing the VPN slot also looks like a network change — so
+        // without this the first session kept running with its own TUN while the
+        // second one was started: two live tunnels and two handshakes against the
+        // server, and the orphaned session's later socket error tore the whole
+        // service down through kill().
+        // The watchdog belongs to the old session: a fresh one starts it again
+        // once it is up (see onConnectionEstablished).
+        stopTunnelWatchdog()
+        controlClient?.shutdown()
+        controlClient = null
+
         controlClient = ControlClient(ClientBridge(this)).also {
             it.launchJobMain()
         }
@@ -522,13 +652,80 @@ internal class SstpVpnService : VpnService() {
     internal fun onConnectionEstablished() {
         networkReconnectAttempts = 0
         lastEstablishedAtMs = SystemClock.elapsedRealtime()
+        startTunnelWatchdog()
         // A tunnel that comes up with the screen already off must switch to the
         // screen-off policy right away: the wake lock taken for the connect would
-        // otherwise be held for the whole session.
+        // otherwise be held for the whole session. With the screen on no lock is
+        // kept at all (the platform keeps the CPU up), so make sure a leftover
+        // from an earlier screen-off period is dropped.
         if (!isScreenInteractive) {
             scheduleScreenOffWakeUps()
-            releaseWakeLock()
         }
+        releaseWakeLock()
+    }
+
+    /**
+     * Watches a live session for the one failure that never surfaces as an error:
+     * a tunnel that is up but carries nothing.
+     *
+     * The check is the peer's own silence. A healthy session receives its echoes
+     * (SSTP and LCP) every few seconds, so once nothing has arrived for
+     * [TUNNEL_SILENCE_MS] the session is asked directly — an SSTP echo request,
+     * which the peer always answers on a working session. Several unanswered
+     * probes in a row mean the session has to be rebuilt.
+     *
+     * This has to live outside the receive loop: that loop blocks on the socket
+     * read, so the echo timers inside it stop ticking exactly when the peer goes
+     * quiet, which is the moment they would be needed.
+     */
+    private fun startTunnelWatchdog() {
+        jobTunnelWatchdog?.cancel()
+        jobTunnelWatchdog = scope.launch {
+            var failures = 0
+            while (isActive) {
+                delay(TUNNEL_WATCH_INTERVAL_MS)
+                if (manuallyDisconnected || waitingForNetwork) continue
+                if (connectionStatus != OscPrefKey.Connected.name) continue
+
+                val session = controlClient ?: continue
+                val before = session.lastIncomingAtMs()
+                if (SystemClock.elapsedRealtime() - before < TUNNEL_SILENCE_MS) {
+                    failures = 0
+                    continue
+                }
+
+                // Nothing has arrived for a while: ask the peer directly.
+                session.sendEchoProbe()
+                delay(TUNNEL_PROBE_GRACE_MS)
+
+                if ((controlClient?.lastIncomingAtMs() ?: before) > before) {
+                    // The probe was answered: the session is alive, just idle.
+                    failures = 0
+                    continue
+                }
+
+                failures++
+                ConnectionLog.append(
+                    "SERVICE",
+                    "Tunnel silent; probe $failures/$TUNNEL_MAX_FAILURES unanswered"
+                )
+                if (failures < TUNNEL_MAX_FAILURES) continue
+
+                failures = 0
+                ConnectionLog.append("SERVICE", "Tunnel carries no traffic; rebuilding the session")
+                scheduleNetworkReconnect(
+                    status = CONNECTION_STATUS_REBUILDING,
+                    userMessage = "The tunnel stopped carrying traffic — rebuilding it…"
+                )
+                return@launch
+            }
+        }
+    }
+
+    /** Stops watching the session; called whenever that session is gone. */
+    private fun stopTunnelWatchdog() {
+        jobTunnelWatchdog?.cancel()
+        jobTunnelWatchdog = null
     }
 
     /**
@@ -539,6 +736,13 @@ internal class SstpVpnService : VpnService() {
     internal fun isNetworkReconnectPending(): Boolean = jobNetworkReconnect?.isActive == true
 
     /**
+     * True while the service is rebuilding the tunnel to take the VPN slot back
+     * from another app. Its session errors must be ignored meanwhile for the same
+     * reason as [isNetworkReconnectPending].
+     */
+    internal fun isRevokeRecoveryPending(): Boolean = jobRevokeRecovery?.isActive == true
+
+    /**
      * Decides whether a session error should be handled by the service (rebuild
      * on the current network) instead of stopping the tunnel.
      *
@@ -546,14 +750,53 @@ internal class SstpVpnService : VpnService() {
      * usual teardown.
      */
     internal fun handleSessionError(throwable: Throwable): Boolean {
-        // A rebuild is already on its way.
+        // A rebuild is already on its way — either on the new network or to
+        // reclaim the VPN slot from another app.
         if (isNetworkReconnectPending()) return true
+        if (isRevokeRecoveryPending()) return true
 
         if (manuallyDisconnected) return false
 
+        // No underlying network at all: nothing to retry yet. Park the tunnel and
+        // rebuild it when a network shows up, instead of failing the connect and
+        // stopping the service. This also covers switching the VPN on while the
+        // device is offline.
+        if (throwable is IOException && !hasUnderlyingNetwork()) {
+            ConnectionLog.append(
+                "SERVICE",
+                "Session error with no network (${throwable.javaClass.simpleName}); " +
+                    "pausing until it comes back"
+            )
+            scheduleNetworkReconnect()
+            return true
+        }
+
+        if (connectionStatus != OscPrefKey.Connected.name) {
+            // A rebuild is already running its own attempt and the tunnel has not
+            // come up yet. If that attempt fails (the new network was not usable
+            // yet, or the server was briefly unreachable), keep retrying within
+            // the same budget instead of tearing the service down — otherwise a
+            // single unlucky attempt left the user without a tunnel until they
+            // reconnected by hand.
+            if (throwable is IOException && networkReconnectAttempts > 0) {
+                val exhausted = networkReconnectAttempts >= MAX_NETWORK_RECONNECT_ATTEMPTS
+                ConnectionLog.append(
+                    "SERVICE",
+                    "Rebuild attempt $networkReconnectAttempts/" +
+                        "$MAX_NETWORK_RECONNECT_ATTEMPTS failed " +
+                        "(${throwable.javaClass.simpleName}); " +
+                        if (exhausted) "giving up" else "retrying"
+                )
+                // Handles the exhausted budget itself: it notifies the app and
+                // stops the service cleanly.
+                scheduleNetworkReconnect()
+                return true
+            }
+            return false
+        }
+
         // Only a live tunnel is worth rebuilding, and only for network-level
         // failures (a switch surfaces as an IOException / SocketException).
-        if (connectionStatus != OscPrefKey.Connected.name) return false
         if (throwable !is IOException) return false
 
         ConnectionLog.append(
@@ -568,6 +811,15 @@ internal class SstpVpnService : VpnService() {
     private fun onUnderlyingNetworkChanged(reason: String) {
         ConnectionLog.append("SERVICE", "Network change: $reason")
         if (manuallyDisconnected) return
+
+        // A parked tunnel is waiting for exactly this: let the rebuild continue.
+        // Checked before anything else, because while parked there is no live
+        // session and the state below is not "Connected".
+        if (waitingForNetwork) {
+            networkWaitWakeup.trySend(Unit)
+            return
+        }
+
         if (connectionStatus != OscPrefKey.Connected.name) return
 
         // Ignore changes that arrive right after the tunnel came up: bringing the
@@ -590,34 +842,157 @@ internal class SstpVpnService : VpnService() {
     }
 
     /**
+     * The network the tunnel's own connection to the server must use: a real
+     * (non-VPN) network with internet access. Our own tunnel is excluded, and so
+     * is any other VPN (e.g. AdGuard): a socket created on another VPN's
+     * interface dies with that interface, which is exactly what happens when we
+     * reclaim the slot from it.
+     */
+    internal fun findUnderlyingNetwork(): android.net.Network? {
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return null
+        return connectivityManager.allNetworks.firstOrNull { network ->
+            val caps = try {
+                connectivityManager.getNetworkCapabilities(network)
+            } catch (_: Exception) {
+                null
+            }
+            caps != null &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+    }
+
+    /**
+     * Makes sure this app may call protect() right now.
+     *
+     * The protect() right belongs to the app that last called
+     * VpnService.prepare(): any prepare() from another VPN app (e.g. AdGuard
+     * trying to bring its protection back) silently revokes it for us, without
+     * an onRevoke() when our TUN is not up at that moment. A socket created
+     * while the right is revoked cannot be protected — protect() returns false
+     * — and once our TUN comes up, that socket's traffic is routed back into
+     * the tunnel itself: the session reports "connected" but carries no traffic
+     * until the server drops it. Calling prepare() here takes the right back
+     * (the same way [IPTerminal] claims the slot before establishing).
+     *
+     * Returns true when the right is ours, false when the user's consent is
+     * missing (nothing can be done from the background in that case).
+     */
+    internal fun ensureProtectRight(): Boolean {
+        return try {
+            val consent = VpnService.prepare(this)
+            if (consent == null) {
+                true
+            } else {
+                ConnectionLog.append("SERVICE", "Protect right: user consent required")
+                false
+            }
+        } catch (e: Exception) {
+            ConnectionLog.append("SERVICE", "Protect right re-claim failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Logs every network the platform currently knows about, together with its
+     * transports and owner. Used while diagnosing a rebuilt tunnel that carries
+     * no traffic: it shows whether another VPN was up when the socket was made.
+     */
+    internal fun logNetworkSnapshot(tag: String) {
+        // Enumerating every network and its capabilities is not free; the line
+        // only exists for the log.
+        if (!ConnectionLog.enabled) return
+        try {
+            val connectivityManager =
+                getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            val description = connectivityManager.allNetworks.joinToString("; ") { network ->
+                val caps = connectivityManager.getNetworkCapabilities(network)
+                val vpn = caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+                val transport = when {
+                    caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+                    caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "cellular"
+                    else -> "other"
+                }
+                "net${network.networkHandle}:$transport${if (vpn) "+vpn" else ""}" +
+                    ":owner=${network.networkHandle}"
+            }
+            ConnectionLog.append("NET", "$tag: $description")
+        } catch (_: Exception) {
+            // Diagnostics must never break the connection.
+        }
+    }
+
+    /**
+     * Releases the session that was stopped while the device had no network: the
+     * SSTP disconnect goes out and the socket is closed, now that the close can
+     * actually reach the server. Returns true when there was one to release.
+     */
+    private suspend fun releasePendingTeardown(): Boolean {
+        val session = pendingTeardown ?: return false
+        pendingTeardown = null
+        ConnectionLog.append("SERVICE", "Releasing the stopped session's socket")
+        session.releaseSocket()
+        return true
+    }
+
+    /**
+     * Releases the deferred session without waiting for the graceful disconnect.
+     * Used when the release cannot be delayed (the service is stopping).
+     */
+    private fun dropPendingTeardown() {
+        val session = pendingTeardown ?: return
+        pendingTeardown = null
+        session.closeSocket()
+    }
+
+    /**
      * Stops the current session and rebuilds the tunnel after a short debounce,
      * so a burst of connectivity callbacks (network lost + new network up) turns
      * into a single reconnect. Bounded to avoid looping on a flapping network.
+     *
+     * With no network at all the attempt budget is left alone: the service parks
+     * the tunnel (see [awaitUnderlyingNetwork]) and rebuilds it once a network is
+     * back, instead of stopping and leaving the user to reconnect by hand.
      */
-    private fun scheduleNetworkReconnect() {
-        if (networkReconnectAttempts >= MAX_NETWORK_RECONNECT_ATTEMPTS) {
-            ConnectionLog.append(
-                "SERVICE",
-                "Network reconnect budget exhausted; stopping"
-            )
-            FlutterCaller().connectionFailed(
-                "VPN_NETWORK_LOST",
-                "The network changed and the VPN could not be restored. " +
-                    "Reconnect manually."
-            )
-            close()
-            return
-        }
-        networkReconnectAttempts++
+    private fun scheduleNetworkReconnect(
+        status: String = CONNECTION_STATUS_NETWORK_CHANGED,
+        userMessage: String = "Network changed — reconnecting…"
+    ) {
+        // The session this watchdog watched is being torn down right here.
+        stopTunnelWatchdog()
+
+        // The two restart paths are mutually exclusive: whichever is started last
+        // owns the rebuild. Running both left the first session alive with its own
+        // TUN while the second was being brought up.
+        jobRevokeRecovery?.cancel()
+        jobRevokeRecovery = null
 
         // Stop the broken session immediately: this also marks it abandoned so
-        // its socket errors are ignored while we wait to reconnect.
-        controlClient?.shutdown()
+        // its socket errors are ignored while we wait to reconnect. Its socket is
+        // only released once a network is back (see pendingTeardown): closing it
+        // is what makes the server drop the session, and while offline that close
+        // never reaches the server.
+        val broken = controlClient
         controlClient = null
+        if (broken != null) {
+            if (pendingTeardown == null) {
+                // The close of a session stopped while offline is what makes the
+                // server drop it, so it is deferred until the network is back.
+                broken.shutdown(keepSocket = true)
+                pendingTeardown = broken
+            } else {
+                // A session is already waiting to be released. That one is older,
+                // and it is the one the server still holds, so keep it deferred
+                // and let this one go right away.
+                broken.shutdown()
+            }
+        }
 
-        notificationStatus = CONNECTION_STATUS_NETWORK_CHANGED
+        notificationStatus = status
         notificationSpeed = ""
-        FlutterCaller().reconnecting("Network changed — reconnecting…")
+        FlutterCaller().reconnecting(userMessage)
         refreshNotification()
 
         jobNetworkReconnect?.cancel()
@@ -625,6 +1000,38 @@ internal class SstpVpnService : VpnService() {
             try {
                 delay(NETWORK_CHANGE_DEBOUNCE_MS)
                 if (manuallyDisconnected) return@launch
+
+                // The old network is gone and the new one may still be coming up.
+                // Rebuilding before it is usable only produces a failed attempt —
+                // and with no network at all there is nothing to rebuild yet.
+                awaitUnderlyingNetwork()
+                if (manuallyDisconnected) return@launch
+
+                // Counted here, not before the wait: an offline device must not
+                // spend the budget on attempts that cannot succeed.
+                if (networkReconnectAttempts >= MAX_NETWORK_RECONNECT_ATTEMPTS) {
+                    ConnectionLog.append(
+                        "SERVICE",
+                        "Network reconnect budget exhausted; stopping"
+                    )
+                    FlutterCaller().connectionFailed(
+                        "VPN_NETWORK_LOST",
+                        "The network changed and the VPN could not be restored. " +
+                            "Reconnect manually."
+                    )
+                    close()
+                    return@launch
+                }
+                networkReconnectAttempts++
+
+                // A usable network is back, so the stopped session's close can
+                // finally reach the server. Releasing it here — and letting the
+                // server act on it before the new session is negotiated — is what
+                // keeps the server from still holding the old session, and the
+                // address it was given, when the new tunnel comes up.
+                if (releasePendingTeardown()) {
+                    delay(OLD_SESSION_RELEASE_SETTLE_MS)
+                }
 
                 ConnectionLog.append("SERVICE", "Reconnecting on the new network")
                 notificationStatus = CONNECTION_STATUS_CONNECTING
@@ -634,6 +1041,74 @@ internal class SstpVpnService : VpnService() {
             } catch (_: CancellationException) {
                 ConnectionLog.append("SERVICE", "Network reconnect cancelled")
             }
+        }
+    }
+
+    /**
+     * Parks the caller until a usable underlying (non-VPN) network is up, so a
+     * rebuild triggered by the loss of the old network does not run while the new
+     * one is still being established, and an offline device waits instead of
+     * burning its retry budget.
+     *
+     * Nothing is polled: the network observer wakes the wait, and the fallback
+     * timeout only covers a missed callback. While parked the service holds no
+     * wake lock and no session, so it costs almost nothing.
+     */
+    private suspend fun awaitUnderlyingNetwork() {
+        if (hasUnderlyingNetwork()) return
+
+        ConnectionLog.append("SERVICE", "No network — pausing until it comes back")
+        waitingForNetwork = true
+        notificationStatus = CONNECTION_STATUS_WAITING_NETWORK
+        notificationSpeed = ""
+        FlutterCaller().reconnecting("No network — waiting for it to come back…")
+        refreshNotification()
+        // Nothing to keep awake while parked: the session is gone, so the wake
+        // lock and the screen-off keepalive alarm have no work to do.
+        cancelScreenOffWakeUps()
+        mainHandler.removeCallbacks(releaseIdleWakeLock)
+        releaseWakeLock()
+
+        try {
+            while (!manuallyDisconnected) {
+                withTimeoutOrNull(NETWORK_WAIT_FALLBACK_MS) { networkWaitWakeup.receive() }
+                if (hasUnderlyingNetwork()) break
+            }
+        } finally {
+            waitingForNetwork = false
+        }
+
+        if (manuallyDisconnected) return
+
+        ConnectionLog.append("SERVICE", "Network is back — reconnecting")
+        // Restore the power policy the session needs. With the screen on the
+        // platform already keeps the CPU up; only a screen-off connect needs the
+        // periodic keepalive alarm.
+        if (isScreenInteractive) {
+            releaseWakeLock()
+        } else {
+            scheduleScreenOffWakeUps()
+        }
+    }
+
+    /**
+     * True when the platform has a usable underlying (non-VPN) network with
+     * internet access. Our own tunnel is excluded: it stays "up" while parked, so
+     * it must never be mistaken for a real network.
+     */
+    private fun hasUnderlyingNetwork(): Boolean {
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return true
+        return connectivityManager.allNetworks.any { network ->
+            val caps = try {
+                connectivityManager.getNetworkCapabilities(network)
+            } catch (_: Exception) {
+                null
+            }
+            caps != null &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         }
     }
 
@@ -815,6 +1290,10 @@ internal class SstpVpnService : VpnService() {
                 "Waiting for the other VPN, then reconnecting…"
             notificationStatus == CONNECTION_STATUS_NETWORK_CHANGED ->
                 "Network changed — rebuilding the tunnel…"
+            notificationStatus == CONNECTION_STATUS_REBUILDING ->
+                "No traffic came back — rebuilding the tunnel…"
+            notificationStatus == CONNECTION_STATUS_WAITING_NETWORK ->
+                "No network — waiting for it to come back…"
             notificationStatus.startsWith("Reconnecting") -> "Waiting to retry…"
             else -> notificationBaseText
         }
@@ -866,9 +1345,18 @@ internal class SstpVpnService : VpnService() {
     internal fun close() {
         connectionStatus = OscPrefKey.Disconnected.name
         connectionStartTime = 0L
+        waitingForNetwork = false
+        stopTunnelWatchdog()
+        // Stopping is final: a parked rebuild would otherwise bring the tunnel
+        // back up after the service was told to stop.
+        jobNetworkReconnect?.cancel()
+        jobNetworkReconnect = null
+        jobRevokeRecovery?.cancel()
+        jobRevokeRecovery = null
         foregroundBuilder = null
         // Final guard: make sure the interface is gone before the service stops.
         controlClient?.closeTerminals()
+        dropPendingTeardown()
         cancelScreenOffWakeUps()
         mainHandler.removeCallbacks(releaseIdleWakeLock)
         releaseWakeLock()
@@ -883,7 +1371,8 @@ internal class SstpVpnService : VpnService() {
      * re-prepares itself a few seconds after losing the slot) and then reclaim
      * the slot and bring our tunnel back up, so the user does not have to switch
      * SoftSSTP on again manually. Bounded to avoid an endless fight with an
-     * always-on VPN.
+     * always-on VPN: the budget counts only takeovers that were not recovered
+     * by a successful reconnect.
      */
     override fun onRevoke() {
         ConnectionLog.append("SERVICE", "VPN slot revoked by another app")
@@ -892,6 +1381,21 @@ internal class SstpVpnService : VpnService() {
             super.onRevoke()
             return
         }
+
+        // Count only the takeovers we could not recover from: when the tunnel
+        // came back up after the previous revoke (lastEstablishedAtMs moved
+        // past it), or a long quiet stretch followed it, the previous takeover
+        // is settled and the count starts over. Without the reconnect check a
+        // streak of recovered takeovers (AdGuard re-arming after each network
+        // switch, all reclaimed within seconds) still spent the budget and the
+        // fifth one gave up on a healthy tunnel.
+        val now = SystemClock.elapsedRealtime()
+        if (lastEstablishedAtMs > lastRevokeAtMs ||
+            now - lastRevokeAtMs > REVOKE_BUDGET_RESET_MS
+        ) {
+            revokeRecoveryAttempts = 0
+        }
+        lastRevokeAtMs = now
 
         if (revokeRecoveryAttempts >= MAX_REVOKE_RECOVERY_ATTEMPTS) {
             ConnectionLog.append(
@@ -916,8 +1420,17 @@ internal class SstpVpnService : VpnService() {
         )
 
         // The system has already deactivated our interface; release our side.
+        // The watchdog goes first: a probe fired during the reclaim would look
+        // like a dead tunnel and would take the rebuild over from the reclaim.
+        stopTunnelWatchdog()
         controlClient?.shutdown()
         controlClient = null
+
+        // Taking the slot back already includes reconnecting, so it supersedes a
+        // pending network-driven restart. Letting both run started two sessions at
+        // once — two handshakes against the server and two TUN interfaces.
+        jobNetworkReconnect?.cancel()
+        jobNetworkReconnect = null
 
         // Tell the user what is happening instead of looking disconnected.
         updateNotificationStatus(CONNECTION_STATUS_TAKEN_OVER)
@@ -949,6 +1462,12 @@ internal class SstpVpnService : VpnService() {
                 notificationSpeed = ""
                 FlutterCaller().reconnecting("Reclaiming VPN slot…")
                 beForegrounded()
+                // A session parked by a network loss may still hold its socket.
+                // Only release it when a network is actually available: without
+                // one the close would be lost again, so it stays deferred.
+                if (hasUnderlyingNetwork() && releasePendingTeardown()) {
+                    delay(OLD_SESSION_RELEASE_SETTLE_MS)
+                }
                 initializeClient()
             } catch (_: CancellationException) {
                 ConnectionLog.append("SERVICE", "Slot reclaim cancelled")
@@ -1004,7 +1523,9 @@ internal class SstpVpnService : VpnService() {
         // interface and making the next establish() return null.
         controlClient?.shutdown()
         controlClient = null
+        dropPendingTeardown()
 
+        stopTunnelWatchdog()
         scope.cancel()
 
         cancelScreenOffWakeUps()

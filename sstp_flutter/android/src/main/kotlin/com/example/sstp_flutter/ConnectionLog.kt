@@ -2,7 +2,11 @@ package com.example.sstp_flutter
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -34,11 +38,29 @@ internal object ConnectionLog {
      */
     private const val SESSION_SEPARATOR_LENGTH = 40
 
+    // The log lives on FUSE-backed external storage, where every open/append/
+    // close costs far more than formatting the line itself. Keep one buffered
+    // writer open for the session and flush it on a timer: a burst of packets
+    // then costs a few memory writes instead of a file operation per line,
+    // while the viewer still sees the tail within half a second.
+    private const val FLUSH_INTERVAL_MS = 500L
+    private const val WRITER_BUFFER_BYTES = 16 * 1024
+
     @Volatile
     var enabled: Boolean = false
 
     private var logFile: File? = null
     private var appVersion: String = ""
+
+    // Guarded by [this]; append() already holds the monitor.
+    private var writer: BufferedWriter? = null
+    private var writerBytes: Long = 0
+    private var lastFlushMs: Long = 0
+
+    // Reused formatters: constructing SimpleDateFormat per line dominated the
+    // cost of a busy log. Both are only touched under the object monitor.
+    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+    private val sessionFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     fun init(context: Context) {
         if (logFile != null) return
@@ -76,13 +98,16 @@ internal object ConnectionLog {
         }
     }
 
-    @Synchronized
     fun append(tag: String, message: String) {
         // When logging is turned off nothing is collected at all, neither in
         // the file nor in the "View connection log" screen (which reads it).
+        // The flag is checked before the monitor, so a disabled log costs one
+        // volatile read instead of a lock acquisition.
         if (!enabled) return
 
-        writeLine("${timestamp()} [$tag] $message")
+        synchronized(this) {
+            writeLine("${timestamp()} [$tag] $message")
+        }
     }
 
     /**
@@ -93,40 +118,90 @@ internal object ConnectionLog {
      * The separator is kept short enough to fit on a single line of the app's
      * monospace log viewer even on narrow phones (no wrapping).
      */
-    @Synchronized
     fun startSession(details: String = "") {
         if (!enabled) return
 
-        val separator = "=".repeat(SESSION_SEPARATOR_LENGTH)
-        writeLine("")
-        writeLine(separator)
-        writeLine("=== NEW SSTP SESSION  ${sessionTimestamp()} ===")
-        writeLine("    appVersion=${appVersion()}")
-        if (details.isNotBlank()) {
-            writeLine("    $details")
+        synchronized(this) {
+            val separator = "=".repeat(SESSION_SEPARATOR_LENGTH)
+            writeLine("")
+            writeLine(separator)
+            writeLine("=== NEW SSTP SESSION  ${sessionTimestamp()} ===")
+            writeLine("    appVersion=${appVersion()}")
+            if (details.isNotBlank()) {
+                writeLine("    $details")
+            }
+            writeLine(separator)
         }
-        writeLine(separator)
     }
 
     /**
      * Appends one line to the shared log file. The file is the single source of
-     * truth (the UI reads it back), so there is no separate in-memory buffer.
+     * truth (the UI reads it back), so the buffered writer is flushed before a
+     * read and at most [FLUSH_INTERVAL_MS] after the last write.
      */
     private fun writeLine(line: String) {
         try {
-            val file = logFile ?: return
-            if (file.exists() && file.length() > MAX_FILE_BYTES) {
-                file.writeText("")
+            var out = writer ?: openWriter() ?: return
+            if (writerBytes > MAX_FILE_BYTES) {
+                closeWriterLocked()
+                logFile?.writeText("")
+                out = openWriter() ?: return
             }
-            file.appendText(line + "\n")
+            out.write(line)
+            out.newLine()
+            writerBytes += line.length + 1L
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastFlushMs >= FLUSH_INTERVAL_MS) {
+                out.flush()
+                lastFlushMs = now
+            }
         } catch (_: Throwable) {
             // Logging must never break the running connection.
+            closeWriterLocked()
         }
+    }
+
+    private fun openWriter(): BufferedWriter? {
+        val file = logFile ?: return null
+        return try {
+            BufferedWriter(
+                OutputStreamWriter(FileOutputStream(file, true), Charsets.UTF_8),
+                WRITER_BUFFER_BYTES
+            ).also {
+                writer = it
+                writerBytes = file.length()
+                lastFlushMs = SystemClock.elapsedRealtime()
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun closeWriterLocked() {
+        try {
+            writer?.flush()
+        } catch (_: Throwable) {
+        }
+        try {
+            writer?.close()
+        } catch (_: Throwable) {
+        }
+        writer = null
+    }
+
+    /** Flushes and closes the writer (used when logging is switched off). */
+    @Synchronized
+    fun flushAndClose() {
+        closeWriterLocked()
     }
 
     @Synchronized
     fun read(): String {
         val file = logFile ?: return ""
+        try {
+            writer?.flush()
+        } catch (_: Throwable) {
+        }
         return try {
             if (file.exists()) file.readText() else ""
         } catch (_: Throwable) {
@@ -136,20 +211,20 @@ internal object ConnectionLog {
 
     @Synchronized
     fun clear() {
+        closeWriterLocked()
         try {
             logFile?.writeText("")
         } catch (_: Throwable) {
             // ignore
         }
+        writerBytes = 0
     }
 
-    private fun timestamp(): String =
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
+    private fun timestamp(): String = timestampFormat.format(Date())
 
     /**
      * Second-precision timestamp for session headers, so the "=== NEW SESSION ==="
      * line stays short and fits on a single row in the log viewer.
      */
-    private fun sessionTimestamp(): String =
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+    private fun sessionTimestamp(): String = sessionFormat.format(Date())
 }
