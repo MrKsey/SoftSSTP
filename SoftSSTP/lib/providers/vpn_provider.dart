@@ -1563,7 +1563,12 @@ class VpnProvider extends ChangeNotifier {
         password: _password,
         androidConfiguration: SSTPAndroidConfiguration(
           verifyHostName: _verifyHostName,
-          useTrustedCert: false,
+          // The imported "Add Certificate" list is a trust anchor for the
+          // verification: it only makes sense (and is only loaded) when the
+          // certificate check is on. With the check off the connection is
+          // trust-all anyway, and the native side falls back to the system
+          // store when no directory was picked.
+          useTrustedCert: _verifySSLCert,
           verifySSLCert: _verifySSLCert,
           sslVersion: _getSSLVersion(),
           useCustomSni: _useCustomSni,
@@ -1649,6 +1654,10 @@ class VpnProvider extends ChangeNotifier {
       udpPort: _seUdpPort,
       qos: !_seDisableQos,
       powerSaving: _powerSavingEnabled,
+      routePrivateAddresses: _routePrivateAddresses,
+      reconnectionEnabled: _reconnectionEnabled,
+      reconnectionCount: _reconnectionCount,
+      reconnectionInterval: _reconnectionInterval,
     );
     // Make sure the native side knows whether to persist the log.
     await _softether.setConnectionLogging(enabled: _connectionLogEnabled);
@@ -2055,8 +2064,9 @@ class VpnProvider extends ChangeNotifier {
     await prefs.setString('vpn_update_notified', info.version);
   }
 
-  /// Persists the energy-saving preference and pushes it to the plugins. The
-  /// SSTP side reads it live; the SoftEther side applies it on the next connect.
+  /// Persists the energy-saving preference and pushes it to the plugins. Both
+  /// sides read it live: a running tunnel picks up the new refresh cadence
+  /// without reconnecting.
   Future<void> savePowerSaving(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     _powerSavingEnabled = enabled;
@@ -2065,10 +2075,13 @@ class VpnProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Pushes the energy-saving preference to the SSTP plugin.
+  /// Pushes the energy-saving preference to both plugins.
   Future<void> _applyPowerSaving() async {
     try {
       await _sstpFlutter.setPowerSaving(enabled: _powerSavingEnabled);
+    } catch (_) {}
+    try {
+      await _softether.setPowerSaving(enabled: _powerSavingEnabled);
     } catch (_) {}
   }
 

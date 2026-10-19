@@ -41,10 +41,11 @@ class KeepAliveManager(private val client: SoftEtherClient) {
     }
 
     /**
-     * Start keepalive manager
+     * Start keepalive manager. Always (re)initialises the timers: it is called
+     * once per session, and a leftover "last received" stamp from the previous
+     * session would otherwise look like a 30 s silence on a fresh connection.
      */
     fun start() {
-        if (isRunning) return
         isRunning = true
         lastSentTime = System.currentTimeMillis()
         lastReceivedTime = System.currentTimeMillis()

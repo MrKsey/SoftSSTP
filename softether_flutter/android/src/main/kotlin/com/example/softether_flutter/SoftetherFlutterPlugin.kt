@@ -24,7 +24,7 @@ import vn.unlimit.softether.model.Route
  * Exposes two channels:
  *  - `softether_flutter`  — commands from Dart (permission, connect, disconnect, …).
  *  - `softether_receiver` — events pushed to Dart ("connectResponse",
- *    "downloadSpeed", "uploadSpeed").
+ *    "trafficUpdate").
  *
  * The heavy lifting lives in [SoftEtherVpnService], which is started with a
  * Parcelable [ConnectionConfig]. State and traffic are relayed through the
@@ -60,8 +60,12 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             val interval = snapshot.intervalMs.coerceAtLeast(1L)
             val downBps = snapshot.diffInBytes * 8L * 1000L / interval
             val upBps = snapshot.diffOutBytes * 8L * 1000L / interval
-            eventChannel.invokeMethod("downloadSpeed", listOf(downBps, snapshot.inBytes * 8L))
-            eventChannel.invokeMethod("uploadSpeed", listOf(upBps, snapshot.outBytes * 8L))
+            // One event carries both directions and the totals: two separate
+            // calls could be split by an UI frame and show a one-sided reading.
+            eventChannel.invokeMethod(
+                "trafficUpdate",
+                listOf(downBps, upBps, snapshot.inBytes * 8L, snapshot.outBytes * 8L)
+            )
         }
     }
 
@@ -106,6 +110,9 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             "takePermission" -> takePermission(result)
             "connect" -> {
                 val config = buildConfig(call)
+                // Seed the live energy-saving state from the profile; the
+                // settings switch can change it later without a reconnect.
+                SoftEtherVpnService.powerSavingLive = config.powerSaving
                 startVpnService(SoftEtherVpnService.ACTION_CONNECT, config)
                 result.success(true)
             }
@@ -126,13 +133,27 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
                 // notice is written by the SSTP plugin, which owns the shared
                 // log file — logging it in both plugins duplicated the line
                 // (the "[LOG]" and "[SERVICE]" pairs the user saw).
-                SoftEtherLog.enabled = call.argument<Boolean>("enabled") ?: false
+                val enabled = call.argument<Boolean>("enabled") ?: false
+                SoftEtherLog.enabled = enabled
+                if (!enabled) {
+                    // Flush and release the buffered writer; nothing will be
+                    // appended until logging is switched on again.
+                    SoftEtherLog.flushAndClose()
+                }
                 result.success(true)
             }
             "setPerLinkStats" -> {
                 // Periodic (every 5 s) per-link traffic split in the log. The
                 // end-of-session split is written regardless of this flag.
                 SoftEtherLog.perLinkStatsEnabled = call.argument<Boolean>("enabled") ?: false
+                result.success(true)
+            }
+            "setPowerSaving" -> {
+                // Applied live: the controller reads the flag on every cadence
+                // decision, and a running session re-applies the native idle
+                // poll right away.
+                SoftEtherVpnService.powerSavingLive = call.argument<Boolean>("enabled") ?: false
+                SoftEtherVpnService.applyPowerSavingLive()
                 result.success(true)
             }
             "getConnectionLog" -> result.success(SoftEtherLog.read())
@@ -175,7 +196,15 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
     private fun buildConfig(call: MethodCall): ConnectionConfig {
         val username = call.argument<String>("username") ?: ""
         val addDefaultRoute = call.argument<Boolean>("addDefaultRoute") ?: true
-        val routes = if (addDefaultRoute) listOf(Route("0.0.0.0", 0)) else emptyList()
+        val routePrivate = call.argument<Boolean>("routePrivateAddresses") ?: false
+        val routes = buildList {
+            if (addDefaultRoute) add(Route("0.0.0.0", 0))
+            if (routePrivate) {
+                add(Route("10.0.0.0", 8))
+                add(Route("172.16.0.0", 12))
+                add(Route("192.168.0.0", 16))
+            }
+        }
         // SoftEther session options (Windows-client equivalents).
         val disableUdp = call.argument<Boolean>("disableUdpAcceleration") ?: true
         return ConnectionConfig(
@@ -203,6 +232,9 @@ class SoftetherFlutterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, A
             useCompress = call.argument<Boolean>("useCompress") ?: false,
             qos = call.argument<Boolean>("qos") ?: true,
             powerSaving = call.argument<Boolean>("powerSaving") ?: false,
+            reconnectionEnabled = call.argument<Boolean>("reconnectionEnabled") ?: false,
+            reconnectionCount = call.argument<Int>("reconnectionCount") ?: 3,
+            reconnectionInterval = call.argument<Int>("reconnectionInterval") ?: 10,
         )
     }
 

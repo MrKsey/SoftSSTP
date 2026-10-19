@@ -12,6 +12,8 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -27,14 +29,18 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import vn.unlimit.softether.controller.ConnectionController
 import vn.unlimit.softether.model.ConnectionConfig
 import vn.unlimit.softether.model.ConnectionState
+
+import java.util.Collections
 
 /**
  * SoftEther VPN Service - Main VPN service implementation for Android
@@ -63,6 +69,22 @@ class SoftEtherVpnService : VpnService() {
         // SharedPreferences. They used to be written on every per-second
         // snapshot, which is a disk write per second for the whole session.
         private const val TRAFFIC_PERSIST_INTERVAL_MS = 30_000L
+
+        // Android keeps a single active VPN: whoever establishes last owns the
+        // default route, and the other tunnel keeps running but carries nothing.
+        // An ad blocker with its own watchdog (AdGuard) re-establishes itself a
+        // few seconds after a network change and takes the slot that way. The
+        // system does not call onRevoke() for it, so nothing else notices: the
+        // session stays up, the TUN stays open, and only the default route
+        // moves away. This watchdog asks ConnectivityManager which session owns
+        // the active VPN network and rebuilds the tunnel when it is not ours.
+        private const val SLOT_CHECK_INTERVAL_MS = 5_000L
+        // Time given to the competing VPN to finish its own startup before the
+        // slot is taken back; reclaiming immediately only races its watchdog.
+        private const val SLOT_LOSS_SETTLE_MS = 3_000L
+        // Consecutive reclaims before giving up, so an always-on VPN cannot turn
+        // this into an endless fight.
+        private const val MAX_SLOT_RECLAIM_ATTEMPTS = 5
 
         // Actions (kept for service start/stop intents)
         const val ACTION_CONNECT = "vn.unlimit.softether.CONNECT"
@@ -120,6 +142,25 @@ class SoftEtherVpnService : VpnService() {
         var lastTrafficSnapshot: SoftEtherTrafficSnapshot = SoftEtherTrafficSnapshot.EMPTY
             private set
         var mDisplaySpeed: Boolean = true
+
+        /**
+         * Live energy-saving state. Seeded from the profile on every connect
+         * and updated by the settings switch without a reconnect: the
+         * controller reads it on each cadence decision, and the running
+         * session re-applies the native idle poll right away (see
+         * [applyPowerSavingLive]).
+         */
+        @Volatile
+        var powerSavingLive: Boolean = false
+
+        /** The running service instance, if any, so settings changes reach it. */
+        @Volatile
+        private var liveInstance: SoftEtherVpnService? = null
+
+        /** Pushes the current energy-saving flag into the live session, if any. */
+        fun applyPowerSavingLive() {
+            liveInstance?.controller?.onPowerSavingChanged()
+        }
 
         private val stateListeners = mutableListOf<StateListener>()
         private val trafficListeners = mutableListOf<TrafficListener>()
@@ -190,6 +231,10 @@ class SoftEtherVpnService : VpnService() {
     private var isRunning = false
     private var mWasConnected = false
     private var mIsUserDisconnect = false
+    // True while the "disconnected by error" notification is on screen. The
+    // service-stop path then skips its own "disconnected" notification: both
+    // carry the app name, and the shade showed the pair as two SoftSSTP entries.
+    private var errorNotificationShown = false
     private var lastStateUpdateTime = 0L
     private var pendingStateUpdate: (() -> Unit)? = null
     private var currentSessionName: String? = null
@@ -214,15 +259,43 @@ class SoftEtherVpnService : VpnService() {
 
     private val networkCallbackThread = HandlerThread("network-callback").apply { start() }
 
+    // Watches whether the default VPN slot is still ours while a session is up
+    // (see SLOT_CHECK_INTERVAL_MS). The attempt counter bounds the reclaims.
+    private var jobSlotWatchdog: Job? = null
+    private var slotReclaimAttempts = 0
+    // True when the tunnel was built to carry the default route, which is when
+    // losing the default network means the tunnel is being bypassed.
+    private var routesDefaultTraffic = false
+
+    // The default-network callback reports networks one by one, and the order of
+    // "new network up" and "old network gone" is not guaranteed: a late onLost()
+    // for the network that just went away must not mark the device offline while
+    // the new one is already up. The reconnect flow waits on that flag, so it
+    // tracks the whole set.
+    private val availableNetworks: MutableSet<Network> =
+        Collections.synchronizedSet(mutableSetOf<Network>())
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             Log.d(TAG, "Network available")
+            availableNetworks.add(network)
             controller?.onNetworkChanged(true)
         }
 
         override fun onLost(network: Network) {
             Log.d(TAG, "Network lost")
-            controller?.onNetworkChanged(false)
+            availableNetworks.remove(network)
+            controller?.onNetworkChanged(availableNetworks.isNotEmpty())
+        }
+    }
+
+    // Watches the underlying (non-VPN) networks separately: registerDefaultNetworkCallback
+    // reports the default network, which is our own tunnel while it is up, so it
+    // never sees Wi-Fi or mobile data come back. A parked tunnel waits for exactly
+    // that, and without this it would sit until the fallback timeout.
+    private val underlyingNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            controller?.onNetworkChanged(true)
         }
     }
 
@@ -230,6 +303,7 @@ class SoftEtherVpnService : VpnService() {
         super.onCreate()
         Log.d(TAG, "Service created")
         instanceAlive = true
+        liveInstance = this
         SoftEtherLog.init(this)
         SoftEtherLog.append("SERVICE", "Service created")
         createNotificationChannel()
@@ -317,6 +391,7 @@ class SoftEtherVpnService : VpnService() {
             .setContentIntent(contentPendingIntent)
 
         notificationManager.notify(NOTIFICATION_CHANNEL_ERROR_ID.hashCode(), builder.build())
+        errorNotificationShown = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -362,6 +437,26 @@ class SoftEtherVpnService : VpnService() {
         return null
     }
 
+    /**
+     * Called when another VPN app (an always-on ad blocker, for example) takes
+     * our VPN slot. The system has already torn our interface down, so the
+     * tunnel is dead. Doing nothing here left the service running with a dead
+     * session and `isRunning` still set: the app's next connect became a silent
+     * no-op ("VPN already running"), the tunnel could not be brought back until
+     * the app was force-closed, and the leftover service showed up as a second
+     * SoftSSTP entry next to the other protocol's tunnel. Stop cleanly instead,
+     * and report it as a connection error so the app explains what happened; its
+     * next connect re-prepares the slot and dethrones the competing VPN.
+     */
+    override fun onRevoke() {
+        SoftEtherLog.append("SERVICE", "VPN slot revoked by another app")
+        if (mIsUserDisconnect) {
+            super.onRevoke()
+            return
+        }
+        stopVpn(disconnectByError = true)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "Service destroyed")
@@ -370,6 +465,7 @@ class SoftEtherVpnService : VpnService() {
         // Cancel any ongoing connection attempt
         connectionJob?.cancel()
         connectionJob = null
+        stopSlotWatchdog()
         
         // Clean up resources OFF the main thread: disconnect/destroy make
         // blocking native calls (nativeDisconnect waits on connect_mutex and
@@ -398,6 +494,7 @@ class SoftEtherVpnService : VpnService() {
         // start the next connect against a fresh instance instead of racing this
         // one's death.
         instanceAlive = false
+        if (liveInstance === this) liveInstance = null
         // NonCancellable: serviceScope is cancelled right below, but this
         // cleanup must still run to free the native connection.
         serviceScope.launch(NonCancellable + Dispatchers.IO) {
@@ -415,11 +512,31 @@ class SoftEtherVpnService : VpnService() {
     @Volatile
     private var isStopping = false
 
+    // Bumped on every connect request. A teardown only stops the service when no
+    // new session has taken over meanwhile, so a connect that arrives while the
+    // previous session is still cleaning up is not killed by its pending stop.
+    @Volatile
+    private var sessionGeneration = 0
+
     private fun startVpn(config: ConnectionConfig) {
-        if (isRunning) {
+        // `isRunning` is true only while a session is actually up, so a connect
+        // that arrives with the flag still set but no live controller is served
+        // instead of being silently dropped — that drop is what made the tunnel
+        // impossible to bring back until the app was force-closed.
+        if (isRunning && controller?.isConnected() == true) {
             Log.w(TAG, "VPN already running")
             return
         }
+        if (isRunning) {
+            Log.w(TAG, "Stale running flag without a live session — starting anyway")
+            isRunning = false
+        }
+
+        // This request owns the service from now on: invalidate the pending stop
+        // of a session that is still tearing down, so it cannot take this one
+        // with it, and let the state callbacks update the UI again.
+        val generation = ++sessionGeneration
+        isStopping = false
 
         Log.d(TAG, "Starting VPN with config: ${config.serverHost}:${config.serverPort}")
         SoftEtherLog.append(
@@ -428,27 +545,40 @@ class SoftEtherVpnService : VpnService() {
         )
         lastTrafficSnapshot = SoftEtherTrafficSnapshot.EMPTY
         notifyTrafficListeners(SoftEtherTrafficSnapshot.EMPTY)
+        errorNotificationShown = false
 
         // Store session name for use in notifications
         currentSessionName = config.sessionName
 
         connectionJob = serviceScope.launch {
+            // Callbacks from a session that has already been replaced must not
+            // touch the current one: a stale session reporting DISCONNECTED (or
+            // an error) would stop the service under the fresh tunnel.
+            fun isCurrent(): Boolean = sessionGeneration == generation
+
             try {
                 // Initialize connection controller
                 controller = ConnectionController(
                     service = this@SoftEtherVpnService,
                     config = config,
                     onStateChange = { state ->
-                        handleConnectionState(state, config.serverHost)
+                        if (isCurrent()) handleConnectionState(state, config.serverHost)
                     },
                     onError = { error ->
                         Log.e(TAG, "VPN Error: $error")
                         // updateNotification(getString(R.string.softether_disconnected_by_error))
-                        mIsUserDisconnect = false
-                        stopVpn(disconnectByError = true)
+                        if (isCurrent()) {
+                            mIsUserDisconnect = false
+                            stopVpn(disconnectByError = true)
+                        }
                     },
                     onTrafficUpdate = { snapshot ->
                         handleTrafficUpdate(snapshot)
+                    },
+                    onWaitingForNetwork = { waiting ->
+                        if (waiting && isCurrent()) {
+                            updateNotification(getString(R.string.softether_waiting_network), true)
+                        }
                     }
                 )
 
@@ -460,6 +590,11 @@ class SoftEtherVpnService : VpnService() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Connection was canceled (user pressed cancel)
                 Log.d(TAG, "Connection cancelled by user")
+                // A newer connect request owns the service now: this cancellation
+                // belongs to the previous session, and marking the new one as a
+                // user disconnect would hide its errors and leave the service
+                // running with a dead tunnel.
+                if (sessionGeneration != generation) return@launch
                 mIsUserDisconnect = true
                 // Clean up whatever the connect flow created (TUN interface,
                 // terminal, deferred native handle). Idempotent — safe even if
@@ -473,8 +608,11 @@ class SoftEtherVpnService : VpnService() {
                 sendConnectionStateBroadcast(STATE_DISCONNECTED)
                 // stopForeground was already done by stopVpn(); make sure the
                 // service itself also stops, or the process lingers with the
-                // VPN route alive.
-                stopSelf()
+                // VPN route alive. Unless a newer connect request already took
+                // over the service, which this stale teardown must not stop.
+                if (sessionGeneration == generation) {
+                    stopSelf()
+                }
             } catch (e: Throwable) {
                 // Throwable, not Exception: the connect flow rethrows whatever it
                 // caught (ConnectionController.connect catches Throwable), and an
@@ -484,6 +622,9 @@ class SoftEtherVpnService : VpnService() {
                 Log.e(TAG, "Failed to start VPN", e)
                 SoftEtherLog.append("ERROR", "Connect failed: ${e.javaClass.simpleName}: ${e.message}")
                 // updateNotification("Connection failed: ${e.message}")
+                // Only the session that is still current may report the failure
+                // and stop the service.
+                if (sessionGeneration != generation) return@launch
                 mIsUserDisconnect = false
                 stopVpn(disconnectByError = true)
             }
@@ -499,6 +640,7 @@ class SoftEtherVpnService : VpnService() {
 
         Log.d(TAG, "Stopping VPN")
         isRunning = false
+        stopSlotWatchdog()
         // Mirror the SSTP service: the app log gets an explicit end-of-session
         // line, so a disconnect (user, error, or protocol switch) is visible
         // without a logcat.
@@ -517,8 +659,14 @@ class SoftEtherVpnService : VpnService() {
 
         // Move UI-facing cleanup (notification, foreground) to happen
         // immediately on the main thread so the user sees "disconnected"
-        // right away.
-        showDisconnectedNotification()
+        // right away. When the tunnel died by error the error notification is
+        // already telling the user that, so this one is skipped: both carry the
+        // app name and the shade showed the pair as two SoftSSTP entries.
+        if (disconnectByError && errorNotificationShown) {
+            errorNotificationShown = false
+        } else {
+            showDisconnectedNotification()
+        }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
 
         // Snapshot references and clear them immediately so onDestroy()
@@ -527,6 +675,9 @@ class SoftEtherVpnService : VpnService() {
         val currentInterface = vpnInterface
         controller = null
         vpnInterface = null
+        // Remember which session this teardown belongs to: a connect that arrives
+        // while it runs must not be killed by the stopSelf() below.
+        val generation = sessionGeneration
 
         // Clean up resources on a background thread WITHOUT calling the
         // blocking graceful disconnect (nativeDisconnect waits for server
@@ -540,7 +691,11 @@ class SoftEtherVpnService : VpnService() {
                     Log.e(TAG, "Error destroying controller resources", e)
                 }
             }
-            stopSelf()
+            // A connect that arrived while this teardown was running owns the
+            // service now; stopping it here would kill the fresh session.
+            if (sessionGeneration == generation) {
+                stopSelf()
+            }
         }
     }
 
@@ -582,6 +737,20 @@ class SoftEtherVpnService : VpnService() {
      * Establish the VPN tunnel interface
      */
     fun establishVpnInterface(config: ConnectionConfig): ParcelFileDescriptor? {
+        // Claim the VPN slot before building the interface. While we sit parked
+        // without network another VPN (an ad blocker, for example) can take the
+        // slot; establish() then returns null and the automatic reconnect burnt
+        // all its attempts and gave up. prepare() returns null when this app is
+        // already authorised and dethrones the competing VPN.
+        try {
+            if (prepare(this) != null) {
+                SoftEtherLog.append("SERVICE", "VPN consent required; cannot reclaim slot in background")
+                return null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "VpnService.prepare failed: ${e.message}")
+        }
+
         // Blocking TUN fd. AOSP's Builder defaults to NON-blocking, and
         // TunTerminal's read loop treats a 0-length read as "nothing to do" —
         // but that is exactly what a non-blocking empty TUN returns (libcore
@@ -600,6 +769,7 @@ class SoftEtherVpnService : VpnService() {
         }
 
         // Add routes
+        routesDefaultTraffic = config.routes.any { it.address == "0.0.0.0" && it.prefixLength == 0 }
         config.routes.forEach { route ->
             builder.addRoute(route.address, route.prefixLength)
         }
@@ -908,6 +1078,13 @@ class SoftEtherVpnService : VpnService() {
                 else -> STATE_DISCONNECTED
             }
             sendConnectionStateBroadcast(stateValue, "")
+            // The tunnel is gone and the user did not ask for it, so stop the
+            // service instead of leaving it running with a foreground
+            // notification and `isRunning` still set. That stale state made the
+            // app's next connect a silent no-op ("VPN already running") and kept
+            // a second SoftSSTP entry alive next to the other protocol's tunnel.
+            // Re-entrant safe: stopVpn() ignores a second call.
+            stopVpn(disconnectByError = state == ConnectionState.ERROR)
             return
         }
 
@@ -932,6 +1109,7 @@ class SoftEtherVpnService : VpnService() {
         if (state == ConnectionState.CONNECTED) {
             mWasConnected = true
             mIsUserDisconnect = false
+            startSlotWatchdog()
         }
 
         // Terminal states always pass through immediately
@@ -999,6 +1177,20 @@ class SoftEtherVpnService : VpnService() {
         // the main thread — otherwise a large parcel unparceled on main causes
         // ANRs in androidx ConnectivityManager$CallbackHandler (see Android docs).
         cm.registerDefaultNetworkCallback(networkCallback, Handler(networkCallbackThread.looper))
+
+        // Underlying networks only: no VPN transport, so our own tunnel cannot
+        // stand in for a real network.
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        try {
+            cm.registerNetworkCallback(request, underlyingNetworkCallback, Handler(networkCallbackThread.looper))
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not watch underlying networks", e)
+        }
     }
 
     private fun unregisterNetworkReceiver() {
@@ -1009,8 +1201,108 @@ class SoftEtherVpnService : VpnService() {
         } catch (e: IllegalArgumentException) {
             // Callback was not registered
         }
+        try {
+            cm.unregisterNetworkCallback(underlyingNetworkCallback)
+        } catch (e: IllegalArgumentException) {
+            // Callback was not registered
+        }
         if (networkCallbackThread.isAlive) {
             networkCallbackThread.quitSafely()
         }
+    }
+
+    /**
+     * True while the active network is the VPN network this service established.
+     *
+     * The tunnel address is what identifies our own VPN: the network that owns
+     * the default route carries the address this service assigned to its
+     * interface. The session id would say the same, but the platform strips it
+     * from the capabilities a regular app gets (it reads back as null, while
+     * dumpsys still shows it).
+     *
+     * Only asked when this tunnel was built to carry the default route: with
+     * split tunneling the VPN is not supposed to be the default network, and
+     * treating that as a lost slot would restart a working tunnel forever. A
+     * device with no network at all is left to the reconnect logic.
+     */
+    private fun isVpnSlotOurs(): Boolean {
+        if (!routesDefaultTraffic) return true
+        val ownIp = controller?.assignedLocalIp
+        if (ownIp.isNullOrBlank()) return true
+        val cm = ContextCompat.getSystemService(this, ConnectivityManager::class.java) ?: return true
+        // Asking for the active network is not enough: with the screen off the
+        // platform hands back the plain Wi-Fi network while our VPN network is
+        // still up and still carrying the default traffic (the default route
+        // lives in the VPN's own routing table). That read as "slot lost" and
+        // rebuilt a perfectly healthy tunnel every minute. Owning the slot means
+        // some VPN network carries this tunnel's own address — the active network
+        // is irrelevant either way.
+        return cm.allNetworks.any { network ->
+            val caps = cm.getNetworkCapabilities(network) ?: return@any false
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@any false
+            val linkProperties = cm.getLinkProperties(network) ?: return@any false
+            linkProperties.linkAddresses.any { it.address.hostAddress == ownIp }
+        }
+    }
+
+    /** TEMPORARY diagnostic for the slot watchdog. */
+    private fun describeNetworks(): String {
+        val cm = ContextCompat.getSystemService(this, ConnectivityManager::class.java) ?: return "cm=null"
+        val active = cm.activeNetwork?.let { cm.getNetworkCapabilities(it)?.let { c -> "activeVpn=${c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)}" } } ?: "active=null"
+        val all = cm.allNetworks.joinToString("; ") { n ->
+            val caps = cm.getNetworkCapabilities(n)
+            val lp = cm.getLinkProperties(n)
+            "h=${n.networkHandle} vpn=${caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true} " +
+                "addrs=${lp?.linkAddresses?.joinToString(",") { it.address.hostAddress ?: "?" }}"
+        }
+        return "$active | $all"
+    }
+
+    /**
+     * Watches the VPN slot while a session is up. Rebuilding the tunnel is what
+     * takes the slot back: establishVpnInterface() calls prepare(), which
+     * dethrones the competing VPN.
+     */
+    private fun startSlotWatchdog() {
+        if (jobSlotWatchdog?.isActive == true) return
+        jobSlotWatchdog = serviceScope.launch {
+            while (!isStopping) {
+                delay(SLOT_CHECK_INTERVAL_MS)
+                if (isStopping || controller?.isConnected() != true) continue
+                if (isVpnSlotOurs()) {
+                    slotReclaimAttempts = 0
+                    continue
+                }
+                // TEMPORARY diagnostic: why does the slot look lost?
+                SoftEtherLog.append(
+                    "DIAG",
+                    "slot check failed: ownIp=${controller?.assignedLocalIp} " +
+                        "routesDefault=$routesDefaultTraffic ${describeNetworks()}"
+                )
+                // Another VPN owns the slot now. Give its startup a moment to
+                // finish, then look again before acting on it.
+                delay(SLOT_LOSS_SETTLE_MS)
+                if (isVpnSlotOurs()) continue
+                if (slotReclaimAttempts >= MAX_SLOT_RECLAIM_ATTEMPTS) {
+                    if (slotReclaimAttempts == MAX_SLOT_RECLAIM_ATTEMPTS) {
+                        slotReclaimAttempts++
+                        SoftEtherLog.append("ERROR", "VPN slot is held by another app — giving up")
+                    }
+                    continue
+                }
+                slotReclaimAttempts++
+                SoftEtherLog.append(
+                    "SERVICE",
+                    "VPN slot taken by another app — rebuilding the tunnel " +
+                        "(attempt $slotReclaimAttempts/$MAX_SLOT_RECLAIM_ATTEMPTS)"
+                )
+                controller?.attemptReconnect()
+            }
+        }
+    }
+
+    private fun stopSlotWatchdog() {
+        jobSlotWatchdog?.cancel()
+        jobSlotWatchdog = null
     }
 }

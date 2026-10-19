@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 
 /// Connection status strings shared with the native side.
@@ -38,6 +36,20 @@ class SoftetherServer {
 
   /// Route all traffic through the tunnel.
   final bool addDefaultRoute;
+
+  /// Also route the private IPv4 ranges (10/8, 172.16/12, 192.168/16) through
+  /// the tunnel, mirroring the SSTP profile option.
+  final bool routePrivateAddresses;
+
+  /// Rebuild the tunnel automatically after a drop. When false a dropped
+  /// tunnel is reported as an error instead of being reconnected.
+  final bool reconnectionEnabled;
+
+  /// Maximum number of rebuild attempts after a drop.
+  final int reconnectionCount;
+
+  /// Delay between rebuild attempts, in seconds.
+  final int reconnectionInterval;
 
   /// Package names excluded from the tunnel.
   final List<String> excludedApps;
@@ -88,6 +100,10 @@ class SoftetherServer {
     this.dns = '8.8.8.8',
     this.mtu = 1500,
     this.addDefaultRoute = true,
+    this.routePrivateAddresses = false,
+    this.reconnectionEnabled = false,
+    this.reconnectionCount = 3,
+    this.reconnectionInterval = 10,
     this.excludedApps = const [],
     this.allowedApps = const [],
     this.connectTimeoutMs = 30000,
@@ -112,6 +128,10 @@ class SoftetherServer {
         'dns': dns,
         'mtu': mtu,
         'addDefaultRoute': addDefaultRoute,
+        'routePrivateAddresses': routePrivateAddresses,
+        'reconnectionEnabled': reconnectionEnabled,
+        'reconnectionCount': reconnectionCount,
+        'reconnectionInterval': reconnectionInterval,
         'excludedApps': excludedApps,
         'allowedApps': allowedApps,
         'connectTimeoutMs': connectTimeoutMs,
@@ -144,7 +164,9 @@ class SoftetherFlutter {
   MethodChannel _command = const MethodChannel('softether_flutter');
   MethodChannel _events = const MethodChannel('softether_receiver');
 
-  Timer? _timer;
+  // Last figures reported by the native side. Native is the single source of
+  // the traffic figures: every "trafficUpdate" event is a fresh measurement, so
+  // the UI never shows an interpolated zero between two ticks.
   int _downSpeed = 0;
   int _upSpeed = 0;
   int _totalDown = 0;
@@ -184,16 +206,22 @@ class SoftetherFlutter {
         case 'connectResponse':
           _handleConnectResponse(arg is Map ? arg : const {});
           break;
-        case 'downloadSpeed':
-          if (arg is List && arg.length >= 2) {
-            _downSpeed += (arg[0] as num).toInt();
-            _totalDown = (arg[1] as num).toInt();
-          }
-          break;
-        case 'uploadSpeed':
-          if (arg is List && arg.length >= 2) {
-            _upSpeed += (arg[0] as num).toInt();
-            _totalUp = (arg[1] as num).toInt();
+        case 'trafficUpdate':
+          if (arg is List && arg.length >= 4) {
+            _downSpeed = (arg[0] as num).toInt();
+            _upSpeed = (arg[1] as num).toInt();
+            _totalDown = (arg[2] as num).toInt();
+            _totalUp = (arg[3] as num).toInt();
+            // Traffic figures only exist for a live session. The teardown
+            // publishes a final empty snapshot AFTER the "disconnected" event;
+            // forwarding it as an onConnected update flipped the home screen
+            // back to "connected", so the disconnect switch looked like it
+            // did nothing. The figures are still stored above, so the
+            // "connected" event (which may race the first snapshot) reports
+            // the current values.
+            if (_connected) {
+              onConnected?.call(_downSpeed, _upSpeed, _totalDown, _totalUp);
+            }
           }
           break;
       }
@@ -211,20 +239,17 @@ class SoftetherFlutter {
         }
         _connected = true;
         // Report the transition right away so the UI leaves "Connecting"
-        // without waiting for the first periodic tick.
+        // without waiting for the first native measurement.
         onConnected?.call(_downSpeed, _upSpeed, _totalDown, _totalUp);
-        _downSpeed = 0;
-        _upSpeed = 0;
-        _startTimer();
         break;
       case SoftetherConnectionStatus.connecting:
         _connected = false;
-        _stopTimer();
+        _resetSpeeds();
         onConnecting?.call();
         break;
       case SoftetherConnectionStatus.disconnected:
         _connected = false;
-        _stopTimer();
+        _resetSpeeds();
         _assignedIp = '';
         onDisconnected?.call();
         if (arg['error'] == true) {
@@ -240,18 +265,9 @@ class SoftetherFlutter {
     }
   }
 
-  void _startTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      onConnected?.call(_downSpeed, _upSpeed, _totalDown, _totalUp);
-      _downSpeed = 0;
-      _upSpeed = 0;
-    });
-  }
-
-  void _stopTimer() {
-    _timer?.cancel();
-    _timer = null;
+  /// Drops the last reported speeds. Used when the session ends or restarts,
+  /// so nothing from the previous session leaks into the new one.
+  void _resetSpeeds() {
     _downSpeed = 0;
     _upSpeed = 0;
   }
@@ -278,10 +294,8 @@ class SoftetherFlutter {
         await _command.invokeMethod<String>('checkLastConnectionStatus');
     final value = status ?? SoftetherConnectionStatus.disconnected;
     _connected = value == SoftetherConnectionStatus.connected;
-    if (_connected) {
-      _startTimer();
-    } else {
-      _stopTimer();
+    if (!_connected) {
+      _resetSpeeds();
     }
     return value;
   }
@@ -314,6 +328,13 @@ class SoftetherFlutter {
   Future<void> setConnectionLogging({required bool enabled}) async {
     await _command
         .invokeMethod<bool>('setConnectionLogging', {'enabled': enabled});
+  }
+
+  /// Enables or disables the energy-saving mode. While it is on, the periodic
+  /// traffic/statistics cycle runs less often, so an idle tunnel wakes the CPU
+  /// less. The data path is unaffected. Applied live, without a reconnect.
+  Future<void> setPowerSaving({required bool enabled}) async {
+    await _command.invokeMethod<bool>('setPowerSaving', {'enabled': enabled});
   }
 
   /// True while the SoftEther VPN service instance exists. Its reported state

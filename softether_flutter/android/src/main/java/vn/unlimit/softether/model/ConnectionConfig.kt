@@ -67,7 +67,13 @@ data class ConnectionConfig(
     // Energy saving: raises the native receive-loop idle wait and slows the
     // per-second housekeeping cycles, so an idle tunnel wakes the CPU less
     // often. Data still arrives at once (poll() returns on the first byte).
-    val powerSaving: Boolean = false
+    val powerSaving: Boolean = false,
+    // Automatic reconnection after a drop, mirroring the profile's
+    // "Reconnection" section. When disabled, a dropped tunnel is reported as
+    // an error instead of being rebuilt.
+    val reconnectionEnabled: Boolean = false,
+    val reconnectionCount: Int = 3,
+    val reconnectionInterval: Int = 10
 ) : Parcelable {
 
     constructor(parcel: Parcel) : this(
@@ -109,7 +115,10 @@ data class ConnectionConfig(
         useEncrypt = parcel.readByte() != 0.toByte(),
         useCompress = parcel.readByte() != 0.toByte(),
         qos = parcel.readByte() != 0.toByte(),
-        powerSaving = parcel.readByte() != 0.toByte()
+        powerSaving = parcel.readByte() != 0.toByte(),
+        reconnectionEnabled = parcel.readByte() != 0.toByte(),
+        reconnectionCount = parcel.readInt(),
+        reconnectionInterval = parcel.readInt()
     )
 
     override fun writeToParcel(parcel: Parcel, flags: Int) {
@@ -152,6 +161,9 @@ data class ConnectionConfig(
         parcel.writeByte(if (useCompress) 1 else 0)
         parcel.writeByte(if (qos) 1 else 0)
         parcel.writeByte(if (powerSaving) 1 else 0)
+        parcel.writeByte(if (reconnectionEnabled) 1 else 0)
+        parcel.writeInt(reconnectionCount)
+        parcel.writeInt(reconnectionInterval)
     }
 
     override fun describeContents(): Int = 0
