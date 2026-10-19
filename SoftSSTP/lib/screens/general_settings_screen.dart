@@ -810,7 +810,7 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Battery optimization',
+                      'Ignore battery optimization',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
@@ -820,9 +820,8 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                     const SizedBox(height: 2),
                     Text(
                       exempt
-                          ? 'Exempt — the VPN keeps running with the screen off'
-                          : 'Not exempt — Android may stop the VPN in the '
-                                'background',
+                          ? 'On — the VPN keeps running with the screen off'
+                          : 'Off — Android may stop the VPN in the background',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppTheme.textSecondary,
@@ -858,11 +857,10 @@ class _GeneralSettingsScreenState extends State<GeneralSettingsScreen>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Extra saving on top of the automatic one. With the screen '
-                      'off the app already stops the per-second updates and lets '
-                      'the CPU sleep; this stretches them with the screen on too. '
-                      'Traffic speed is unaffected, the status and speed refresh '
-                      'slower',
+                      'Extra saving on top of the automatic one. Turns off the '
+                      'connection animations and refreshes the status and speed '
+                      'slower; with the screen off the updates already stop on '
+                      'their own. Traffic speed is unaffected',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppTheme.textSecondary,

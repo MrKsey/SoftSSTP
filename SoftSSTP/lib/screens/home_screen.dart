@@ -55,10 +55,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// Starts the button pulse while the tunnel is coming up and stops it
   /// otherwise, so no frames are scheduled once the connection has settled.
+  /// Energy saving turns the pulse off entirely.
   void _syncPulseAnimation() {
-    final status = _vpnProvider?.status;
+    final provider = _vpnProvider;
+    final status = provider?.status;
     final shouldPulse =
-        status == VpnStatus.connecting || status == VpnStatus.reconnecting;
+        !(provider?.powerSavingEnabled ?? false) &&
+        (status == VpnStatus.connecting || status == VpnStatus.reconnecting);
     if (shouldPulse) {
       if (!_animationController.isAnimating) {
         _animationController.repeat(reverse: true);
@@ -231,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen>
                 ? vpnProvider.statusMessage
                 : 'Establishing secure tunnel to '
                       '${vpnProvider.host}:${vpnProvider.port}…',
+            animate: !vpnProvider.powerSavingEnabled,
           ),
         ];
       case VpnStatus.reconnecting:
@@ -240,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen>
             vpnProvider.statusMessage.isEmpty
                 ? 'Waiting to retry…'
                 : vpnProvider.statusMessage,
+            animate: !vpnProvider.powerSavingEnabled,
           ),
         ];
       case VpnStatus.disconnected:
@@ -248,18 +253,23 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Widget _buildProgressRow(String text) {
+  Widget _buildProgressRow(String text, {bool animate = true}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const SizedBox(
-          width: 12,
-          height: 12,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Colors.orange,
-          ),
-        ),
+        // With energy saving on, the spinner becomes a static glyph: the row
+        // still says "working", but nothing schedules frames.
+        if (animate)
+          const SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.orange,
+            ),
+          )
+        else
+          const Icon(Icons.hourglass_top, size: 13, color: Colors.orange),
         const SizedBox(width: 8),
         Flexible(
           child: Text(
@@ -400,6 +410,9 @@ class _HomeScreenState extends State<HomeScreen>
 
     if (vpnProvider.status == VpnStatus.connecting ||
         vpnProvider.status == VpnStatus.reconnecting) {
+      // Energy saving drops the pulse, keeping the same "not tappable while
+      // connecting" behaviour as the animated variant.
+      if (vpnProvider.powerSavingEnabled) return buttonContent;
       return AnimatedBuilder(
         animation: _pulseAnimation,
         builder: (context, child) {

@@ -1792,7 +1792,8 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Import custom SSL certificate',
+                    'Import CA certificates used when Verify SSL Certificate '
+                    'is on',
                     style: TextStyle(
                       fontSize: 14,
                       color: AppTheme.textSecondary,
