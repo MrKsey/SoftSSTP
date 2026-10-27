@@ -26,7 +26,7 @@
 | Слой | Проект | Роль |
 |------|--------|------|
 | SSTP / PPP / TLS | [kittoku/Open-SSTP-Client](https://github.com/kittoku/Open-SSTP-Client) (MIT) | Исходный Android-клиент SSTP, отсюда взят движок протокола. |
-| Плагин Flutter | [NavidShokoufeh/sstp_flutter](https://github.com/NavidShokoufeh/sstp_flutter) | Flutter-обёртка над этим движком. |
+| Плагин Flutter | [NavidShokoufeh/sstp_flutter](https://github.com/NavidShokoufeh/sstp_flutter) (BSD-3-Clause) | Flutter-обёртка над этим движком. |
 | SoftEther / SSL-VPN | [hoang-rio/SoftEther-Android-Module](https://github.com/hoang-rio/SoftEther-Android-Module) (Apache-2.0) | Встроенный в проект клиент SoftEther (ядро на C, JNI, Kotlin) для плагина `softether_flutter`. |
 | Криптография TLS | [OpenSSL](https://www.openssl.org/) (Apache-2.0) | Собирается из исходников для клиента SoftEther (см. `softether_flutter`). |
 | Базовое приложение | [CluvexStudio/ZedPass](https://github.com/CluvexStudio/ZedPass) | Проект, с которого начался форк. |
@@ -133,11 +133,11 @@
   он растягивает те же циклы ещё и при включённом экране, поэтому статус и скорость
   обновляются медленнее; сама скорость трафика не меняется. По умолчанию выключен, при
   тестах его можно выключить обратно.
-- Update: переключатель автопроверки при запуске, пункт Check now и, когда есть
-  свежий релиз, пункт, который открывает страницу релиза в браузере. Приложение
-  только читает релизы на GitHub, само APK оно не скачивает и не ставит, поэтому
-  разрешение на установку приложений не запрашивается, а одна и та же сборка годится
-  и для F-Droid.
+- Update: переключатель автопроверки при запуске (по умолчанию выключен), пункт
+  Check now и, когда есть свежий релиз, пункт, который открывает страницу релиза в
+  браузере. Приложение только читает релизы на GitHub, само APK оно не скачивает и
+  не ставит, поэтому разрешение на установку приложений не запрашивается, а одна и
+  та же сборка годится и для F-Droid.
 - Donate и About: кошельки для доната и ссылки на проект.
 
 Профиль открывается нажатием и состоит из своих блоков.
@@ -312,5 +312,5 @@ APK соответствующего релиза. Поэтому F-Droid пуб
 ## Лицензия
 
 SoftSSTP распространяется под GNU General Public License v3.0, текст в
-[`SoftSSTP/LICENSE`](SoftSSTP/LICENSE). Входящие компоненты сохраняют свои
-лицензии. Гарантий нет.
+[`LICENSE`](LICENSE). Входящие компоненты сохраняют свои лицензии, список в
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Гарантий нет.

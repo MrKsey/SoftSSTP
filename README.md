@@ -26,7 +26,7 @@ Material Design 3. It speaks Microsoft SSTP (MS-SSTP) and the SoftEther
 | Layer | Project | Role |
 |-------|---------|------|
 | SSTP / PPP / TLS | [kittoku/Open-SSTP-Client](https://github.com/kittoku/Open-SSTP-Client) (MIT) | Original Android SSTP client; the protocol engine comes from it. |
-| Flutter plugin | [NavidShokoufeh/sstp_flutter](https://github.com/NavidShokoufeh/sstp_flutter) | Flutter wrapper around that engine. |
+| Flutter plugin | [NavidShokoufeh/sstp_flutter](https://github.com/NavidShokoufeh/sstp_flutter) (BSD-3-Clause) | Flutter wrapper around that engine. |
 | SoftEther / SSL-VPN | [hoang-rio/SoftEther-Android-Module](https://github.com/hoang-rio/SoftEther-Android-Module) (Apache-2.0) | Vendored SoftEther client (C core, JNI, Kotlin) used by the `softether_flutter` plugin. |
 | TLS crypto | [OpenSSL](https://www.openssl.org/) (Apache-2.0) | Built from source for the SoftEther client (see `softether_flutter`). |
 | Base app | [CluvexStudio/ZedPass](https://github.com/CluvexStudio/ZedPass) | The project this fork started from. |
@@ -127,10 +127,11 @@ The Settings screen is made of blocks.
   also stretches those cycles while the screen is on, so the status and speed refresh
   slower; the traffic speed itself is unaffected. It is off by default and can be
   turned off again during tests.
-- Update: a switch for the automatic check at startup, a Check now entry and, when a
-  newer release exists, an entry that opens the release page in the browser. The app
-  reads the GitHub releases only; it does not download or install APKs itself, so it
-  asks for no permission to install apps and the same build works on F-Droid.
+- Update: a switch for the automatic check at startup (off by default), a Check now
+  entry and, when a newer release exists, an entry that opens the release page in the
+  browser. The app reads the GitHub releases only; it does not download or install APKs
+  itself, so it asks for no permission to install apps and the same build works on
+  F-Droid.
 - Donate and About: donation wallets and links to the project.
 
 A profile opens on tap and has its own blocks.
@@ -306,5 +307,5 @@ You can support the project by sending a donation to any of the wallets below.
 ## License
 
 SoftSSTP is released under the GNU General Public License v3.0; see
-[`SoftSSTP/LICENSE`](SoftSSTP/LICENSE). Upstream components keep their own licenses.
-No warranty.
+[`LICENSE`](LICENSE). Upstream components keep their own licenses; the list is in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). No warranty.

@@ -1,0 +1,1 @@
+Automatic update checks are now off by default; use Settings, Update, Check now to look for a release. Added the missing license files and third-party notices. The VPN itself is unchanged.

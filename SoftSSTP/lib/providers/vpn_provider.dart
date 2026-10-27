@@ -103,9 +103,10 @@ class VpnProvider extends ChangeNotifier {
   /// always recorded, so the distribution is never lost.
   bool _perLinkStatsEnabled = false;
 
-  /// Automatic update check against the project's GitHub releases. On by
-  /// default; the Update section in Settings can turn it off.
-  bool _updateCheckEnabled = true;
+  /// Automatic update check against the project's GitHub releases. Off by
+  /// default: the check contacts GitHub, so the user opts in from the Update
+  /// section in Settings. The manual Check now entry works regardless.
+  bool _updateCheckEnabled = false;
 
   /// The newer release found by the last check, or null when up to date.
   UpdateInfo? _availableUpdate;
@@ -905,7 +906,7 @@ class VpnProvider extends ChangeNotifier {
     _customSni = prefs.getString('vpn_custom_sni') ?? '';
     _connectionLogEnabled = prefs.getBool('vpn_connection_log') ?? false;
     _perLinkStatsEnabled = prefs.getBool('vpn_per_link_stats') ?? false;
-    _updateCheckEnabled = prefs.getBool('vpn_update_check') ?? true;
+    _updateCheckEnabled = prefs.getBool('vpn_update_check') ?? false;
     _lastNotifiedVersion = prefs.getString('vpn_update_notified') ?? '';
     _powerSavingEnabled = prefs.getBool('vpn_power_saving') ?? false;
     _pppMtu = prefs.getInt('vpn_ppp_mtu') ?? 1500;

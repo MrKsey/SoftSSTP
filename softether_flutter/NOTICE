@@ -1,0 +1,15 @@
+SoftEther Android Module
+Copyright 2024 Hoang Rio (hoang-rio)
+https://github.com/hoang-rio/SoftEther-Android-Module
+
+This product includes software developed by Hoang Rio and licensed under the
+Apache License, Version 2.0. The copy in this directory is modified for the
+softether_flutter plugin in SoftSSTP: the Android wrapper, the JNI bindings and
+the C core were adapted to build as a Flutter plugin and to run inside the
+SoftSSTP VPN service.
+
+The full license text is in LICENSE in this directory.
+
+This product also includes OpenSSL, Copyright The OpenSSL Project Authors,
+licensed under the Apache License, Version 2.0. The license text is in
+android/src/main/cpp/openssl/LICENSE.txt.
