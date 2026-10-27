@@ -13,9 +13,9 @@ RepoType: git
 Repo: https://github.com/MrKsey/SoftSSTP.git
 
 Builds:
-  - versionName: 1.7.0
-    versionCode: 151
-    commit: a44332589a0cdc6e6a75ea8fed8826e96fd36f85
+  - versionName: 1.7.1
+    versionCode: 161
+    commit: ff383303dfb1b3850e12eea79f9dcaa78a0ef30b
     subdir: SoftSSTP
     submodules: true
     sudo:
@@ -73,9 +73,9 @@ Builds:
       - cd $orig/SoftSSTP
     ndk: 28.2.13676358
 
-  - versionName: 1.7.0
-    versionCode: 152
-    commit: a44332589a0cdc6e6a75ea8fed8826e96fd36f85
+  - versionName: 1.7.1
+    versionCode: 162
+    commit: ff383303dfb1b3850e12eea79f9dcaa78a0ef30b
     subdir: SoftSSTP
     submodules: true
     sudo:
@@ -141,5 +141,5 @@ VercodeOperation:
   - '%c * 10 + 1'
   - '%c * 10 + 2'
 UpdateCheckData: SoftSSTP/pubspec.yaml|version:\s.+\+(\d+)|.|version:\s(.+)\+
-CurrentVersion: 1.7.0
-CurrentVersionCode: 152
+CurrentVersion: 1.7.1
+CurrentVersionCode: 162
