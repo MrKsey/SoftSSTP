@@ -1,40 +1,167 @@
 {
-  "generated": "2026-11-02T11:00:37.736208Z",
+  "generated": "2026-11-09T11:28:12.910358Z",
   "source": "https://www.vpngate.net/en/",
   "servers": [
     {
       "protocol": "sstp",
-      "host": "public-vpn-219.opengw.net",
+      "host": "public-vpn-199.opengw.net",
       "port": 443,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "213.61 Mbps"
+      "lineQuality": "244.60 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "public-vpn-219.opengw.net",
+      "host": "public-vpn-199.opengw.net",
       "port": 443,
-      "udpPort": 1195,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "213.61 Mbps"
+      "lineQuality": "244.60 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "public-vpn-97.opengw.net",
+      "host": "public-vpn-213.opengw.net",
       "port": 443,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "281.16 Mbps"
+      "lineQuality": "205.85 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "public-vpn-97.opengw.net",
+      "host": "public-vpn-213.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "205.85 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-145.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "290.38 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-145.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "290.38 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-151.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "245.22 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-151.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "245.22 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-134.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "226.00 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-134.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "226.00 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-100.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "205.49 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-100.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "205.49 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-133.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "181.79 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-133.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "181.79 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-130.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "195.41 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-130.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "195.41 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-234.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "160.91 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-234.opengw.net",
       "port": 443,
       "udpPort": 1195,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "281.16 Mbps"
+      "lineQuality": "160.91 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-158.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "229.44 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-158.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "229.44 Mbps"
     },
     {
       "protocol": "sstp",
@@ -42,7 +169,7 @@
       "port": 443,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "387.65 Mbps"
+      "lineQuality": "304.00 Mbps"
     },
     {
       "protocol": "softether",
@@ -50,258 +177,90 @@
       "port": 443,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "387.65 Mbps"
+      "lineQuality": "304.00 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "public-vpn-183.opengw.net",
+      "host": "public-vpn-219.opengw.net",
       "port": 443,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "199.64 Mbps"
+      "lineQuality": "231.18 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "public-vpn-183.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "199.64 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "public-vpn-253.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "183.46 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "public-vpn-253.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "183.46 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "public-vpn-75.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "187.12 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "public-vpn-75.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "187.12 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "public-vpn-208.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "230.54 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "public-vpn-208.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "230.54 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "public-vpn-223.opengw.net",
-      "port": 443,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "208.44 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "public-vpn-223.opengw.net",
+      "host": "public-vpn-219.opengw.net",
       "port": 443,
       "udpPort": 1195,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "208.44 Mbps"
+      "lineQuality": "231.18 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "vpn793900501.opengw.net",
-      "port": 1387,
-      "countryCode": "US",
-      "countryName": "United States",
-      "lineQuality": "106.74 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn793900501.opengw.net",
-      "port": 1387,
-      "udpPort": 1903,
-      "countryCode": "US",
-      "countryName": "United States",
-      "lineQuality": "106.74 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn716187063.opengw.net",
-      "port": 1632,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "267.03 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn716187063.opengw.net",
-      "port": 1632,
-      "udpPort": 1227,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "267.03 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn946019409.opengw.net",
-      "port": 1557,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "415.66 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn946019409.opengw.net",
-      "port": 1557,
-      "udpPort": 1709,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "415.66 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn893972689.opengw.net",
-      "port": 1934,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "100.61 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn893972689.opengw.net",
-      "port": 1934,
-      "udpPort": 1330,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "100.61 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn151821463.opengw.net",
-      "port": 1487,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "62.90 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn151821463.opengw.net",
-      "port": 1487,
-      "udpPort": 1467,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "62.90 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn824185996.opengw.net",
-      "port": 1819,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "81.47 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn824185996.opengw.net",
-      "port": 1819,
-      "udpPort": 1693,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "81.47 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn711674780.opengw.net",
-      "port": 1603,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "86.06 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn711674780.opengw.net",
-      "port": 1603,
-      "udpPort": 1929,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "86.06 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "laud.opengw.net",
+      "host": "public-vpn-57.opengw.net",
       "port": 443,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "33.06 Mbps"
+      "lineQuality": "215.04 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "laud.opengw.net",
+      "host": "public-vpn-57.opengw.net",
       "port": 443,
-      "udpPort": 1194,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "33.06 Mbps"
+      "lineQuality": "215.04 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "opengw.opengw.net",
-      "port": 443,
-      "countryCode": "RO",
-      "countryName": "Romania",
-      "lineQuality": "287.91 Mbps"
+      "host": "vpn341010937.opengw.net",
+      "port": 1262,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "311.78 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "opengw.opengw.net",
-      "port": 443,
-      "udpPort": 1194,
-      "countryCode": "RO",
-      "countryName": "Romania",
-      "lineQuality": "287.91 Mbps"
+      "host": "vpn341010937.opengw.net",
+      "port": 1262,
+      "udpPort": 1609,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "311.78 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "vpn368694634.opengw.net",
-      "port": 1545,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "73.20 Mbps"
+      "host": "public-vpn-144.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "150.97 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "vpn368694634.opengw.net",
-      "port": 1545,
-      "udpPort": 1406,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "73.20 Mbps"
+      "host": "public-vpn-144.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "150.97 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn102800483.opengw.net",
+      "port": 1475,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "874.18 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn102800483.opengw.net",
+      "port": 1475,
+      "udpPort": 1801,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "874.18 Mbps"
     },
     {
       "protocol": "sstp",
@@ -309,7 +268,7 @@
       "port": 1491,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "505.74 Mbps"
+      "lineQuality": "553.13 Mbps"
     },
     {
       "protocol": "softether",
@@ -318,1055 +277,1122 @@
       "udpPort": 1945,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "505.74 Mbps"
+      "lineQuality": "553.13 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "vpn266997445.opengw.net",
-      "port": 1544,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "29.02 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn266997445.opengw.net",
-      "port": 1544,
-      "udpPort": 1688,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "29.02 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn867088117.opengw.net",
-      "port": 1598,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "137.39 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn867088117.opengw.net",
-      "port": 1598,
-      "udpPort": 1280,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "137.39 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn756339455.opengw.net",
-      "port": 1341,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "63.39 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn756339455.opengw.net",
-      "port": 1341,
-      "udpPort": 1633,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "63.39 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn343221110.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "104.32 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn343221110.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "104.32 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn462059193.opengw.net",
-      "port": 1868,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "37.40 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn462059193.opengw.net",
-      "port": 1868,
-      "udpPort": 1262,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "37.40 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn386579301.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "95.30 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn386579301.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "95.30 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn121994191.opengw.net",
-      "port": 1936,
+      "host": "vpn401356693.opengw.net",
+      "port": 1448,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "406.71 Mbps"
+      "lineQuality": "93.30 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "vpn121994191.opengw.net",
-      "port": 1936,
-      "udpPort": 1444,
+      "host": "vpn401356693.opengw.net",
+      "port": 1448,
+      "udpPort": 1993,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "406.71 Mbps"
+      "lineQuality": "93.30 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "vpn201053993.opengw.net",
-      "port": 1386,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "8.69 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn201053993.opengw.net",
-      "port": 1386,
-      "udpPort": 1539,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "8.69 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn942380032.opengw.net",
-      "port": 1347,
+      "host": "vpn551324053.opengw.net",
+      "port": 1877,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "318.72 Mbps"
+      "lineQuality": "85.93 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "vpn942380032.opengw.net",
-      "port": 1347,
-      "udpPort": 1982,
+      "host": "vpn551324053.opengw.net",
+      "port": 1877,
+      "udpPort": 1567,
       "countryCode": "JP",
       "countryName": "Japan",
-      "lineQuality": "318.72 Mbps"
+      "lineQuality": "85.93 Mbps"
     },
     {
       "protocol": "sstp",
-      "host": "vpn480670153.opengw.net",
-      "port": 1923,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "89.77 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn480670153.opengw.net",
-      "port": 1923,
-      "udpPort": 1827,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "89.77 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn468282901.opengw.net",
-      "port": 1508,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "89.23 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn468282901.opengw.net",
-      "port": 1508,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "89.23 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn210060972.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "443.20 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn210060972.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "443.20 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn859005905.opengw.net",
-      "port": 1800,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "107.96 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn859005905.opengw.net",
-      "port": 1800,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "107.96 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn248213101.opengw.net",
-      "port": 1403,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "0.00 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn248213101.opengw.net",
-      "port": 1403,
-      "udpPort": 1510,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "0.00 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn815715390.opengw.net",
-      "port": 1248,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "95.89 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn815715390.opengw.net",
-      "port": 1248,
-      "udpPort": 1935,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "95.89 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn365529984.opengw.net",
-      "port": 1704,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "819.72 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn365529984.opengw.net",
-      "port": 1704,
-      "udpPort": 1886,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "819.72 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn433650989.opengw.net",
-      "port": 1903,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "96.15 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn433650989.opengw.net",
-      "port": 1903,
-      "udpPort": 1301,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "96.15 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn454701555.opengw.net",
-      "port": 1990,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "520.79 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn454701555.opengw.net",
-      "port": 1990,
-      "udpPort": 1304,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "520.79 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn647204175.opengw.net",
-      "port": 1667,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "186.47 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn647204175.opengw.net",
-      "port": 1667,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "186.47 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn302487523.opengw.net",
-      "port": 1791,
-      "countryCode": "TH",
-      "countryName": "Thailand",
-      "lineQuality": "365.76 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn302487523.opengw.net",
-      "port": 1791,
-      "udpPort": 1382,
-      "countryCode": "TH",
-      "countryName": "Thailand",
-      "lineQuality": "365.76 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn521662939.opengw.net",
-      "port": 1393,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "249.74 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn521662939.opengw.net",
-      "port": 1393,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "249.74 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn162822314.opengw.net",
-      "port": 1672,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "94.48 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn162822314.opengw.net",
-      "port": 1672,
-      "udpPort": 1660,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "94.48 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn128013158.opengw.net",
-      "port": 1594,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "84.92 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn128013158.opengw.net",
-      "port": 1594,
-      "udpPort": 1309,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "84.92 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn972816741.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "82.59 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn972816741.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "82.59 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn429454304.opengw.net",
-      "port": 1640,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "209.60 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn429454304.opengw.net",
-      "port": 1640,
-      "udpPort": 1538,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "209.60 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn910284494.opengw.net",
-      "port": 1402,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "356.85 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn910284494.opengw.net",
-      "port": 1402,
-      "udpPort": 1708,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "356.85 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn723407679.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "55.19 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn723407679.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "55.19 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn127203103.opengw.net",
-      "port": 1621,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "268.53 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn127203103.opengw.net",
-      "port": 1621,
-      "udpPort": 1814,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "268.53 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn301583961.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "102.80 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn301583961.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "102.80 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn311836490.opengw.net",
-      "port": 1679,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "26.06 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn311836490.opengw.net",
-      "port": 1679,
-      "udpPort": 1452,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "26.06 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn135774294.opengw.net",
-      "port": 1516,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "285.09 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn135774294.opengw.net",
-      "port": 1516,
-      "udpPort": 1412,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "285.09 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn805501458.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "86.80 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn805501458.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "86.80 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn821500723.opengw.net",
-      "port": 1276,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "64.99 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn821500723.opengw.net",
-      "port": 1276,
-      "udpPort": 1195,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "64.99 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn379155927.opengw.net",
-      "port": 1853,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "97.30 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn379155927.opengw.net",
-      "port": 1853,
-      "udpPort": 1831,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "97.30 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn875529462.opengw.net",
-      "port": 1379,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "950.37 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn875529462.opengw.net",
-      "port": 1379,
-      "udpPort": 1734,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "950.37 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn322196242.opengw.net",
-      "port": 1398,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "96.66 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn322196242.opengw.net",
-      "port": 1398,
-      "udpPort": 1256,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "96.66 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn295755714.opengw.net",
-      "port": 1224,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "81.19 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn295755714.opengw.net",
-      "port": 1224,
-      "udpPort": 1733,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "81.19 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn559430764.opengw.net",
-      "port": 1984,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "278.27 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn559430764.opengw.net",
-      "port": 1984,
-      "udpPort": 1420,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "278.27 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn221668572.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "403.08 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn221668572.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "403.08 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn917747960.opengw.net",
-      "port": 1298,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "698.65 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn917747960.opengw.net",
-      "port": 1298,
-      "udpPort": 1975,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "698.65 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn429642618.opengw.net",
-      "port": 1347,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "93.72 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn429642618.opengw.net",
-      "port": 1347,
-      "udpPort": 1369,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "93.72 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn642899027.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "360.90 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn642899027.opengw.net",
-      "port": 995,
-      "udpPort": 1884,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "360.90 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn976179965.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "298.89 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn976179965.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "298.89 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn290088217.opengw.net",
-      "port": 1605,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "642.37 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn290088217.opengw.net",
-      "port": 1605,
-      "udpPort": 1636,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "642.37 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn402970398.opengw.net",
-      "port": 1421,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "95.49 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn402970398.opengw.net",
-      "port": 1421,
-      "udpPort": 1895,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "95.49 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn580111143.opengw.net",
-      "port": 1707,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "634.21 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn580111143.opengw.net",
-      "port": 1707,
-      "udpPort": 1513,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "634.21 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn603218398.opengw.net",
-      "port": 1238,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "672.50 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn603218398.opengw.net",
-      "port": 1238,
-      "udpPort": 1422,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "672.50 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn177195726.opengw.net",
-      "port": 1882,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "688.92 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn177195726.opengw.net",
-      "port": 1882,
-      "udpPort": 1618,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "688.92 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn580134559.opengw.net",
-      "port": 1414,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "94.58 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn580134559.opengw.net",
-      "port": 1414,
-      "udpPort": 1662,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "94.58 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn566261919.opengw.net",
-      "port": 1627,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "385.47 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn566261919.opengw.net",
-      "port": 1627,
-      "udpPort": 1806,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "385.47 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn293104640.opengw.net",
-      "port": 995,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "401.47 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn293104640.opengw.net",
-      "port": 995,
-      "udpPort": 1195,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "401.47 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn322144206.opengw.net",
-      "port": 1653,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "359.07 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn322144206.opengw.net",
-      "port": 1653,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "359.07 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn441053045.opengw.net",
-      "port": 1972,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "84.71 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn441053045.opengw.net",
-      "port": 1972,
-      "udpPort": 1697,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "84.71 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn661206485.opengw.net",
-      "port": 1583,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "40.31 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn661206485.opengw.net",
-      "port": 1583,
-      "countryCode": "KR",
-      "countryName": "Korea Republic of",
-      "lineQuality": "40.31 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn215888696.opengw.net",
-      "port": 1342,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "6.18 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn215888696.opengw.net",
-      "port": 1342,
-      "udpPort": 1434,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "6.18 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn928364919.opengw.net",
-      "port": 1884,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "96.55 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn928364919.opengw.net",
-      "port": 1884,
-      "udpPort": 1229,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "96.55 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn611200918.opengw.net",
-      "port": 1815,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "29.35 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn611200918.opengw.net",
-      "port": 1815,
-      "udpPort": 1975,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "29.35 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn547287684.opengw.net",
-      "port": 1954,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "38.00 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn547287684.opengw.net",
-      "port": 1954,
-      "udpPort": 1627,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "38.00 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn684766837.opengw.net",
-      "port": 1857,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "41.36 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn684766837.opengw.net",
-      "port": 1857,
-      "udpPort": 1973,
-      "countryCode": "RU",
-      "countryName": "Russian Federation",
-      "lineQuality": "41.36 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn272383655.opengw.net",
-      "port": 1903,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "194.45 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn272383655.opengw.net",
-      "port": 1903,
-      "udpPort": 1678,
-      "countryCode": "JP",
-      "countryName": "Japan",
-      "lineQuality": "194.45 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn216005149.opengw.net",
-      "port": 1683,
-      "countryCode": "NZ",
-      "countryName": "New Zealand",
-      "lineQuality": "551.34 Mbps"
-    },
-    {
-      "protocol": "softether",
-      "host": "vpn216005149.opengw.net",
-      "port": 1683,
-      "udpPort": 1823,
-      "countryCode": "NZ",
-      "countryName": "New Zealand",
-      "lineQuality": "551.34 Mbps"
-    },
-    {
-      "protocol": "sstp",
-      "host": "vpn265277249.opengw.net",
+      "host": "opengw.opengw.net",
       "port": 443,
-      "countryCode": "HR",
-      "countryName": "Croatia (LOCAL Name: Hrvatska)",
-      "lineQuality": "206.19 Mbps"
+      "countryCode": "RO",
+      "countryName": "Romania",
+      "lineQuality": "367.52 Mbps"
     },
     {
       "protocol": "softether",
-      "host": "vpn265277249.opengw.net",
+      "host": "opengw.opengw.net",
       "port": 443,
       "udpPort": 1194,
-      "countryCode": "HR",
-      "countryName": "Croatia (LOCAL Name: Hrvatska)",
-      "lineQuality": "206.19 Mbps"
+      "countryCode": "RO",
+      "countryName": "Romania",
+      "lineQuality": "367.52 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-42.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "239.83 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-42.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "239.83 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn461782020.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "70.83 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn461782020.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "70.83 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-232.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "189.67 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-232.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "189.67 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn176878445.opengw.net",
+      "port": 1393,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "384.24 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn176878445.opengw.net",
+      "port": 1393,
+      "udpPort": 1451,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "384.24 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn957218909.opengw.net",
+      "port": 1814,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "49.75 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn957218909.opengw.net",
+      "port": 1814,
+      "udpPort": 1248,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "49.75 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "public-vpn-71.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "191.91 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "public-vpn-71.opengw.net",
+      "port": 443,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "191.91 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn978234813.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "92.52 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn978234813.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "92.52 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn320086889.opengw.net",
+      "port": 1886,
+      "countryCode": "CA",
+      "countryName": "Canada",
+      "lineQuality": "254.05 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn320086889.opengw.net",
+      "port": 1886,
+      "udpPort": 1776,
+      "countryCode": "CA",
+      "countryName": "Canada",
+      "lineQuality": "254.05 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn365690426.opengw.net",
+      "port": 1729,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "190.14 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn365690426.opengw.net",
+      "port": 1729,
+      "udpPort": 1753,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "190.14 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn590567407.opengw.net",
+      "port": 1853,
+      "countryCode": "RU",
+      "countryName": "Russian Federation",
+      "lineQuality": "69.48 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn590567407.opengw.net",
+      "port": 1853,
+      "udpPort": 1195,
+      "countryCode": "RU",
+      "countryName": "Russian Federation",
+      "lineQuality": "69.48 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn326464611.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "79.84 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn326464611.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "79.84 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn905823011.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "6.03 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn905823011.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "6.03 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn219650000.opengw.net",
+      "port": 1254,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "677.78 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn219650000.opengw.net",
+      "port": 1254,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "677.78 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn602978780.opengw.net",
+      "port": 1482,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "4.01 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn602978780.opengw.net",
+      "port": 1482,
+      "udpPort": 1915,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "4.01 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn745346330.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "429.06 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn745346330.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "429.06 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn258326420.opengw.net",
+      "port": 1662,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "468.46 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn258326420.opengw.net",
+      "port": 1662,
+      "udpPort": 1489,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "468.46 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn914058380.opengw.net",
+      "port": 1296,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "120.73 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn914058380.opengw.net",
+      "port": 1296,
+      "udpPort": 1351,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "120.73 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn313400325.opengw.net",
+      "port": 1454,
+      "countryCode": "RU",
+      "countryName": "Russian Federation",
+      "lineQuality": "95.31 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn313400325.opengw.net",
+      "port": 1454,
+      "udpPort": 1608,
+      "countryCode": "RU",
+      "countryName": "Russian Federation",
+      "lineQuality": "95.31 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn279709555.opengw.net",
+      "port": 1426,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "87.97 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn279709555.opengw.net",
+      "port": 1426,
+      "udpPort": 1468,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "87.97 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn485780034.opengw.net",
+      "port": 1710,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "65.28 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn485780034.opengw.net",
+      "port": 1710,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "65.28 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn204235245.opengw.net",
+      "port": 1982,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "904.47 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn204235245.opengw.net",
+      "port": 1982,
+      "udpPort": 1755,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "904.47 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn255960269.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "42.11 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn255960269.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "42.11 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn199965117.opengw.net",
+      "port": 1669,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "80.22 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn199965117.opengw.net",
+      "port": 1669,
+      "udpPort": 1457,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "80.22 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn754737646.opengw.net",
+      "port": 1543,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "487.84 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn754737646.opengw.net",
+      "port": 1543,
+      "udpPort": 1808,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "487.84 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn427527028.opengw.net",
+      "port": 1686,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "17.83 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn427527028.opengw.net",
+      "port": 1686,
+      "udpPort": 1318,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "17.83 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn132141539.opengw.net",
+      "port": 1339,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "519.82 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn132141539.opengw.net",
+      "port": 1339,
+      "udpPort": 1211,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "519.82 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn811974197.opengw.net",
+      "port": 1468,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "58.12 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn811974197.opengw.net",
+      "port": 1468,
+      "udpPort": 1897,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "58.12 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn662821307.opengw.net",
+      "port": 1819,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "455.77 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn662821307.opengw.net",
+      "port": 1819,
+      "udpPort": 1953,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "455.77 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn687618522.opengw.net",
+      "port": 1666,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "700.42 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn687618522.opengw.net",
+      "port": 1666,
+      "udpPort": 1338,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "700.42 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn620843630.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "95.96 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn620843630.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "95.96 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn875209728.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "87.52 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn875209728.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "87.52 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn501803801.opengw.net",
+      "port": 1577,
+      "countryCode": "RU",
+      "countryName": "Russian Federation",
+      "lineQuality": "624.03 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn501803801.opengw.net",
+      "port": 1577,
+      "udpPort": 1768,
+      "countryCode": "RU",
+      "countryName": "Russian Federation",
+      "lineQuality": "624.03 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn204344617.opengw.net",
+      "port": 1391,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "44.71 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn204344617.opengw.net",
+      "port": 1391,
+      "udpPort": 1686,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "44.71 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn849621319.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "759.80 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn849621319.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "759.80 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn898866193.opengw.net",
+      "port": 1446,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "89.78 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn898866193.opengw.net",
+      "port": 1446,
+      "udpPort": 1631,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "89.78 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn458903199.opengw.net",
+      "port": 1202,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "49.50 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn458903199.opengw.net",
+      "port": 1202,
+      "udpPort": 1247,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "49.50 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn597024046.opengw.net",
+      "port": 1930,
+      "countryCode": "TH",
+      "countryName": "Thailand",
+      "lineQuality": "327.12 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn597024046.opengw.net",
+      "port": 1930,
+      "udpPort": 1969,
+      "countryCode": "TH",
+      "countryName": "Thailand",
+      "lineQuality": "327.12 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn554018431.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "85.23 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn554018431.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "85.23 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn104312461.opengw.net",
+      "port": 1947,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "51.92 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn104312461.opengw.net",
+      "port": 1947,
+      "udpPort": 1800,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "51.92 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn451268085.opengw.net",
+      "port": 1731,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "94.72 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn451268085.opengw.net",
+      "port": 1731,
+      "udpPort": 1596,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "94.72 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn941226593.opengw.net",
+      "port": 1781,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "92.63 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn941226593.opengw.net",
+      "port": 1781,
+      "udpPort": 1690,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "92.63 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn433540982.opengw.net",
+      "port": 1580,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "488.95 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn433540982.opengw.net",
+      "port": 1580,
+      "udpPort": 1834,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "488.95 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn548012598.opengw.net",
+      "port": 1296,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "60.74 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn548012598.opengw.net",
+      "port": 1296,
+      "udpPort": 1989,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "60.74 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn925106395.opengw.net",
+      "port": 1829,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "114.22 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn925106395.opengw.net",
+      "port": 1829,
+      "udpPort": 1439,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "114.22 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn367397666.opengw.net",
+      "port": 1387,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "62.34 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn367397666.opengw.net",
+      "port": 1387,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "62.34 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn857348997.opengw.net",
+      "port": 1544,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "389.16 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn857348997.opengw.net",
+      "port": 1544,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "389.16 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn857530575.opengw.net",
+      "port": 1743,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "97.30 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn857530575.opengw.net",
+      "port": 1743,
+      "udpPort": 1941,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "97.30 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn739981111.opengw.net",
+      "port": 1811,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "116.34 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn739981111.opengw.net",
+      "port": 1811,
+      "udpPort": 1544,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "116.34 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn602098046.opengw.net",
+      "port": 1925,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "170.27 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn602098046.opengw.net",
+      "port": 1925,
+      "udpPort": 1294,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "170.27 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn167227310.opengw.net",
+      "port": 1925,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "49.49 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn167227310.opengw.net",
+      "port": 1925,
+      "udpPort": 1609,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "49.49 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn661075949.opengw.net",
+      "port": 1221,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "807.72 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn661075949.opengw.net",
+      "port": 1221,
+      "udpPort": 1988,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "807.72 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn595249968.opengw.net",
+      "port": 1647,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "416.82 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn595249968.opengw.net",
+      "port": 1647,
+      "udpPort": 1968,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "416.82 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn943498995.opengw.net",
+      "port": 1634,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "23.83 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn943498995.opengw.net",
+      "port": 1634,
+      "udpPort": 1689,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "23.83 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn575377343.opengw.net",
+      "port": 1428,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "79.40 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn575377343.opengw.net",
+      "port": 1428,
+      "udpPort": 1590,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "79.40 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn719955747.opengw.net",
+      "port": 1616,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "100.39 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn719955747.opengw.net",
+      "port": 1616,
+      "udpPort": 1589,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "100.39 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn189305209.opengw.net",
+      "port": 1550,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "52.81 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn189305209.opengw.net",
+      "port": 1550,
+      "udpPort": 1754,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "52.81 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn576236365.opengw.net",
+      "port": 1697,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "484.57 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn576236365.opengw.net",
+      "port": 1697,
+      "udpPort": 1463,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "484.57 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn116676185.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "100.84 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn116676185.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "100.84 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn583338654.opengw.net",
+      "port": 1689,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "84.46 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn583338654.opengw.net",
+      "port": 1689,
+      "udpPort": 1994,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "84.46 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn627469744.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "95.12 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn627469744.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "95.12 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn739407957.opengw.net",
+      "port": 1629,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "77.14 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn739407957.opengw.net",
+      "port": 1629,
+      "udpPort": 1681,
+      "countryCode": "JP",
+      "countryName": "Japan",
+      "lineQuality": "77.14 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn332672299.opengw.net",
+      "port": 995,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "39.89 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn332672299.opengw.net",
+      "port": 995,
+      "udpPort": 1195,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "39.89 Mbps"
+    },
+    {
+      "protocol": "sstp",
+      "host": "vpn879574077.opengw.net",
+      "port": 1833,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "82.84 Mbps"
+    },
+    {
+      "protocol": "softether",
+      "host": "vpn879574077.opengw.net",
+      "port": 1833,
+      "udpPort": 1777,
+      "countryCode": "KR",
+      "countryName": "Korea Republic of",
+      "lineQuality": "82.84 Mbps"
     }
   ]
 }
